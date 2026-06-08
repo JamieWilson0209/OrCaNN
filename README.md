@@ -95,12 +95,3 @@ figures/ roi_<i>.png (trace + scalogram + rate)   max_projection_detections.png
 - **Standing caveat** — the temporal model is trained on in-vivo 2-photon data;
   absolute rate scale on Fluo-4 organoid recordings is uncalibrated. Prefer
   continuous rate measures over absolute event counts for cross-domain analysis.
-
-## Tests
-
-```bash
-pytest -q            # or: python tests/test_smoke.py
-```
-
-Synthetic smoke/integration tests covering every module; no real data or GPU
-required.
