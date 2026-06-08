@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orcann"
+version = "0.1.0"
+description = "A single derivative-of-Gaussian operator for spatial and temporal calcium-imaging analysis"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "tifffile>=2023.7",
+    "nd2>=0.10",
+    "h5py>=3.9",
+    "pyyaml>=6.0",
+    "matplotlib>=3.7",
+    "roifile>=2023.0",   # ImageJ/FIJI ROI sets (annotation intake)
+]
+
+# torch is installed separately in setup_eddie.sh so the CUDA build can be
+# matched to the cluster's driver/CUDA module rather than pinned here.
+[project.optional-dependencies]
+torch = ["torch>=2.1"]
+
+[tool.setuptools.packages.find]
+include = ["orcann*"]
