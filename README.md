@@ -9,7 +9,7 @@ The pipeline detects somata in a recording, extracts a fluorescence trace per
 cell, and estimates a per-bin event rate plus discrete transients — then a
 separate module aggregates across recordings for group analysis.
 
-Functionality is dependant on the indicator used - LoG usage is optimised for Fluo4, Shifted Gaussian Ring Filter/Fast Radial Symmetry Transform will be added after training verification.
+Functionality is dependant on the indicator used - LoG usage is optimised for Fluo4, Shifted Gaussian Ring Filter/Fast Radial Symmetry Transform will be added after training verification for alternate indicators.
 
 ## The idea
 
