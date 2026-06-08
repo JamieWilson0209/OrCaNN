@@ -14,9 +14,9 @@
 | $\nabla^2 G_\sigma$ | Laplacian-of-Gaussian (LoG); the Marr–Hildreth operator |
 | $\nabla G_\sigma$ | first derivative of Gaussian (antisymmetric) |
 | $*$, $*_x$ | convolution; convolution in the spatial argument only |
-| $\bar{y}(x)$ | temporal mean image, $\operatorname{mean}_t Y(x,t)$ |
+| $\bar{y}(x)$ | temporal mean image, $\mathrm{mean}_t Y(x,t)$ |
 | $L(x,t)$ | band-passed movie $\nabla^2 G_\sigma *_x Y(\cdot,t)$ |
-| $C(u,v)$ | pixel–pixel temporal second moment $\operatorname{mean}_t[Y(u,\cdot)Y(v,\cdot)]$ |
+| $C(u,v)$ | pixel–pixel temporal second moment $\mathrm{mean}_t[Y(u,\cdot)Y(v,\cdot)]$ |
 | $f_s$ | frame rate (Hz); target regime is 2 Hz |
 | $a,\ \tau_k,\ \theta$ | wavelet scale (samples); characteristic timescale (s); mother asymmetry |
 
@@ -73,7 +73,7 @@ The projection is nonlinear, and $\max(\mathrm{smooth}(\cdot))\neq\mathrm{smooth
 
 * **Mean (linear).** Folds trivially: per-frame and post-projection smoothing are identical; the cascade is a single LoG at $\sqrt{\sigma_s^2+\sigma_d^2}$ on $\bar{y}$.
 * **Std / local-correlation (quadratic).** Fold cleanly, but onto the **covariance operator**, not the image. With $f=G_\sigma *_x Y$,
-$$\operatorname{var}_t f(x)\ =\ \big[(G_\sigma\otimes G_\sigma)\,C\big](x,x)\ -\ \big[(G_\sigma * \bar{y})(x)\big]^2$$
+$$\mathrm{var}_t f(x)\ =\ \big[(G_\sigma\otimes G_\sigma)\,C\big](x,x)\ -\ \big[(G_\sigma * \bar{y})(x)\big]^2$$
 i.e. smooth $C(u,v)$ in **both** spatial slots, read the diagonal, subtract the smoothed-mean squared. *(Verified numerically: direct vs covariance-operator form agree to $3\times10^{-16}$.)* The energy-feature / Wiener–Khinchin principle: a quadratic feature of a linear-filter output is a linear functional of the autocorrelation.
 * **Max (order statistic).** Genuinely irreducible — outside the moment algebra. This is **why max is a separately-computed channel** (§3.4), not something folded into the convolution.
 
@@ -83,21 +83,21 @@ Applying the LoG **per frame**, before the nonlinearity, unifies smoothing and d
 
 | Channel | Pooling | Detects | Role |
 | :--- | :--- | :--- | :--- |
-| **structural** | 0th moment: $\operatorname{mean}_t L = \nabla^2 G_\sigma*\bar{y}$ | all visible somata (active or silent) | **the annotation target** |
+| **structural** | 0th moment: $\mathrm{mean}_t L = \nabla^2 G_\sigma*\bar{y}$ | all visible somata (active or silent) | **the annotation target** |
 | **max** | $L^\infty$: $\nabla^2 G_\sigma$ on a robust max projection | sparse, low-baseline cells | the ROI-drawing substrate |
-| **variance** | 2nd, diagonal: $\operatorname{var}_t L$ | active blobs | activity feature |
+| **variance** | 2nd, diagonal: $\mathrm{var}_t L$ | active blobs | activity feature |
 | **coherence** | 2nd, off-diagonal (§3.5) | coherent activity | noise-robust activity feature |
 
-The **structural** channel is the LoG of the mean image and is the primary detector, because the manual ROIs mark every visible cell (§3.7). The **max** channel is the irreducible order statistic of §3.3, computed explicitly as $\nabla^2 G_\sigma$ applied to a **top-$k$ robust max projection** ($k$-th largest $\approx$ the $(1-q)$ percentile, default $q=0.99$; top-$k$ is a partial sort, ~20× faster than `quantile`, and rejects single-frame hotspots without per-frame smoothing). It matches the substrate the annotators drew on and surfaces sparse low-baseline firers invisible to mean/variance. **Variance** uses the centred 2nd moment because $\nabla^2 G$ is zero-mean, so subtracting $\operatorname{mean}_t L$ removes static structure and isolates *active* blobs.
+The **structural** channel is the LoG of the mean image and is the primary detector, because the manual ROIs mark every visible cell (§3.7). The **max** channel is the irreducible order statistic of §3.3, computed explicitly as $\nabla^2 G_\sigma$ applied to a **top-$k$ robust max projection** ($k$-th largest $\approx$ the $(1-q)$ percentile, default $q=0.99$; top-$k$ is a partial sort, ~20× faster than `quantile`, and rejects single-frame hotspots without per-frame smoothing). It matches the substrate the annotators drew on and surfaces sparse low-baseline firers invisible to mean/variance. **Variance** uses the centred 2nd moment because $\nabla^2 G$ is zero-mean, so subtracting $\mathrm{mean}_t L$ removes static structure and isolates *active* blobs.
 
 Default configuration: `structural + max + variance` on, coherence off.
 
 ### 3.5 The correlation-energy (coherence) channel
 
 The variance channel is the **diagonal** of the band-passed temporal covariance; a faint cell competes against the full noise variance. The **off-diagonal** has no such floor:
-$$C_{\mathrm{coh}}(x,\sigma)\ =\ \frac{1}{|\Delta|}\sum_{\delta\in\Delta}\operatorname{Cov}_t\!\big(L(x,\cdot),\,L(x{+}\delta,\cdot)\big)$$
+$$C_{\mathrm{coh}}(x,\sigma)\ =\ \frac{1}{|\Delta|}\sum_{\delta\in\Delta}\mathrm{Cov}_t\!\big(L(x,\cdot),\,L(x{+}\delta,\cdot)\big)$$
 
-For spatially-independent noise $\mathbb{E}[\operatorname{Cov}_t]\approx 0$ ($\delta\neq0$), so a faint-but-coherent cell stands out even when buried in variance. This is the principled, in-framework form of the old "local correlation image," and it cannot be reduced to a per-frame filter (off-diagonal information needs cross-pixel temporal products). **Empirical finding (synthetic):** helps faint-cell recall in a moderate-noise band ($0.40\to0.60$ at noise sd $0.12$), neutral elsewhere, never harmful; the high-noise tie is partly a short-recording artefact ($\operatorname{Var}$ of the estimate $\propto 1/T$), so long real recordings should widen the useful regime. **Opt-in; the real spatial harness decides.**
+For spatially-independent noise $\mathbb{E}[\mathrm{Cov}_t]\approx 0$ ($\delta\neq0$), so a faint-but-coherent cell stands out even when buried in variance. This is the principled, in-framework form of the old "local correlation image," and it cannot be reduced to a per-frame filter (off-diagonal information needs cross-pixel temporal products). **Empirical finding (synthetic):** helps faint-cell recall in a moderate-noise band ($0.40\to0.60$ at noise sd $0.12$), neutral elsewhere, never harmful; the high-noise tie is partly a short-recording artefact ($\mathrm{Var}$ of the estimate $\propto 1/T$), so long real recordings should widen the useful regime. **Opt-in; the real spatial harness decides.**
 
 ### 3.6 Learnable realisation
 
@@ -132,7 +132,7 @@ $\lambda = 2\pi a/\sqrt{2.5}\approx 3.974\,a$ samples (Torrence & Compo, $m=2$);
 
 ### 4.4 What is learned vs geometry
 
-* **Rate head (supervised):** learned map from the multi-scale response to a non-negative **per-bin rate** $\hat{r}=\mathrm{softplus}(\text{head}(W))$, trained on resampled public spike trains. Loss $=\text{MSE}(\hat{r},r) + (1-\operatorname{corr}(\hat{r},r))$. ~1.7k params.
+* **Rate head (supervised):** learned map from the multi-scale response to a non-negative **per-bin rate** $\hat{r}=\mathrm{softplus}(\text{head}(W))$, trained on resampled public spike trains. Loss $=\text{MSE}(\hat{r},r) + (1-\mathrm{corr}(\hat{r},r))$. ~1.7k params.
 * **Duration (geometry, label-free):** soft-argmax over scale of $|W(\cdot,b)|$ at each event bin → $\hat{\tau}(b)=\exp(\sum_k w_k\log\tau_k)$, read with the *asymmetric* mother. **$\hat{\tau}$ is an inflated multiple of the decay constant $\tau$ (≈5×; ≈8× in synthetic tests), not $\tau$ itself** — faithful in ordering/separation, not absolute seconds.
 
 Rate (supervised) and duration (geometry) are on separate paths so the rate head cannot distort the duration read-out, and duration needs no labels (none exist).
@@ -214,7 +214,7 @@ End state: both stages are the same operator — learnable derivative-of-Gaussia
 
 ---
 
-## 9. Honesty ledger (consolidated caveats)
+## 9. Caveats
 
 * **2 Hz timing.** Sub-frame spike timing is not identifiable from 2 Hz input. Temporal target is a per-bin rate; discrete spikes are a downstream thresholding step.
 * **Detection target settled, not free.** The detector matches the all-somata annotations via the structural channel; this was a correction (an activity-only detector would have under-counted silent cells). Active/silent is reported as a derived label.
