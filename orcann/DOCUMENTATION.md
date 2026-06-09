@@ -9,16 +9,16 @@
 
 | Symbol | Meaning |
 |---|---|
-| $Y(x,t)$ | movie: fluorescence at spatial position $x\in\mathbb{R}^2$, frame $t$ |
-| $G_\sigma$ | Gaussian of scale $\sigma$ |
-| $\nabla^2 G_\sigma$ | Laplacian-of-Gaussian (LoG); the Marr–Hildreth operator |
-| $\nabla G_\sigma$ | first derivative of Gaussian (antisymmetric) |
-| $*$, $*_x$ | convolution; convolution in the spatial argument only |
-| $\bar y(x)$ | temporal mean image, $\mathrm{mean}_t Y(x,t)$ |
-| $L(x,t)$ | band-passed movie $\nabla^2 G_\sigma *_x Y(\cdot,t)$ |
-| $C(u,v)$ | pixel–pixel temporal second moment $\mathrm{mean}_t[Y(u,\cdot)Y(v,\cdot)]$ |
-| $f_s$ | frame rate (Hz); target regime is $2\ \mathrm{Hz}$ |
-| $a,\ \tau_k,\ \theta$ | wavelet scale (samples); characteristic timescale (s); mother asymmetry |
+| $`Y(x,t)`$ | movie: fluorescence at spatial position $`x\in\mathbb{R}^2`$, frame $`t`$ |
+| $`G_\sigma`$ | Gaussian of scale $`\sigma`$ |
+| $`\nabla^2 G_\sigma`$ | Laplacian-of-Gaussian (LoG); the Marr–Hildreth operator |
+| $`\nabla G_\sigma`$ | first derivative of Gaussian (antisymmetric) |
+| $`*`$, $`*_x`$ | convolution; convolution in the spatial argument only |
+| $`\bar y(x)`$ | temporal mean image, $`\mathrm{mean}_t Y(x,t)`$ |
+| $`L(x,t)`$ | band-passed movie $`\nabla^2 G_\sigma *_x Y(\cdot,t)`$ |
+| $`C(u,v)`$ | pixel–pixel temporal second moment $`\mathrm{mean}_t[Y(u,\cdot)Y(v,\cdot)]`$ |
+| $`f_s`$ | frame rate (Hz); target regime is $`2\ \mathrm{Hz}`$ |
+| $`a,\ \tau_k,\ \theta`$ | wavelet scale (samples); characteristic timescale (s); mother asymmetry |
 
 The single object underneath the whole project is the **normalised derivative-of-Gaussian family**. Everything below is a deployment of it in a different dimension, at a different scale, pooled at a different temporal moment, or on a different side of a nonlinearity.
 
@@ -30,19 +30,19 @@ The classical pipeline used two methods that looked unrelated: **Laplacian-of-Ga
 
 The Ricker wavelet is the normalised negative second derivative of a Gaussian:
 
-$$
+```math
 \psi_{\text{Ricker}}(t)\ \propto\ \Big(1-\tfrac{t^2}{a^2}\Big)e^{-t^2/2a^2}\ =\ -\,a^2\,\frac{d^2}{dt^2}G_a(t).
-$$
+```
 
 The LoG is the same thing in two dimensions:
 
-$$
+```math
 \nabla^2 G_\sigma(x)\ =\ \frac{|x|^2-2\sigma^2}{\sigma^4}\,G_\sigma(x).
-$$
+```
 
-Both are $\nabla^2 G$. LoG sweeps a **spatial** scale $\sigma$ for blobs of varying radius; the Ricker CWT sweeps a **temporal** scale $a$ for transients of varying duration. A blob of radius $r$ is matched at $\sigma=r/\sqrt2$; a transient at the $a$ whose Fourier period equals its width.
+Both are $`\nabla^2 G`$. LoG sweeps a **spatial** scale $`\sigma`$ for blobs of varying radius; the Ricker CWT sweeps a **temporal** scale $`a`$ for transients of varying duration. A blob of radius $`r`$ is matched at $`\sigma=r/\sqrt2`$; a transient at the $`a`$ whose Fourier period equals its width.
 
-**Design commitment that follows.** The architecture is *one generating function deployed across a scale group*, not a free bank of independent filters. A learnable bank that drifted from $\nabla^2 G$ would still detect things, but it would dissolve the unification, make the duration axis uninterpretable, and break the claim that the two stages are the same operator. Every learnable component **generates** its kernels from $\nabla^2 G$ with a few interpretable parameters (scales, plus one temporal asymmetry angle); the weights are never free. Both trained stages turn out to share the shape *learnable derivative-of-Gaussian wavelet → nonlinearity → head*.
+**Design commitment that follows.** The architecture is *one generating function deployed across a scale group*, not a free bank of independent filters. A learnable bank that drifted from $`\nabla^2 G`$ would still detect things, but it would dissolve the unification, make the duration axis uninterpretable, and break the claim that the two stages are the same operator. Every learnable component **generates** its kernels from $`\nabla^2 G`$ with a few interpretable parameters (scales, plus one temporal asymmetry angle); the weights are never free. Both trained stages turn out to share the shape *learnable derivative-of-Gaussian wavelet → nonlinearity → head*.
 
 ---
 
@@ -62,46 +62,46 @@ The two stages have radically different supervision, and the asymmetry is struct
 
 ### 3.1 The classical pipeline, stated as operators
 
-Per-frame Gaussian smoothing at $\sigma_s$ → nonlinear temporal projection $R_t\in\{\max,\ \mathrm{std},\ \text{local-corr}\}$ → LoG detection at $\sigma_d$ → Otsu contour per seed:
+Per-frame Gaussian smoothing at $`\sigma_s`$ → nonlinear temporal projection $`R_t\in\{\max,\ \mathrm{std},\ \text{local-corr}\}`$ → LoG detection at $`\sigma_d`$ → Otsu contour per seed:
 
-$$
+```math
 D(x)\ =\ \nabla^2 G_{\sigma_d} *_x\ R_t\big[(G_{\sigma_s} *_x Y)(\cdot,t)\big].
-$$
+```
 
 ### 3.2 Per-frame smoothing **is** part of the LoG
 
 Two facts collapse smoothing and detection into one operator wherever the projection is linear:
-1. **Gaussians compose:** $G_a * G_b = G_{\sqrt{a^2+b^2}}$.
-2. **The Laplacian commutes with convolution:** $\nabla^2(f*g)=(\nabla^2 f)*g$.
+1. **Gaussians compose:** $`G_a * G_b = G_{\sqrt{a^2+b^2}}`$.
+2. **The Laplacian commutes with convolution:** $`\nabla^2(f*g)=(\nabla^2 f)*g`$.
 
-Hence $\nabla^2 G_{\sigma_d} *(G_{\sigma_s} * I) = \nabla^2 G_{\sqrt{\sigma_s^2+\sigma_d^2}} * I$. The hand-tuned smoothing was never outside the convolution — it shifted the LoG's effective scale and set a hard floor (nothing finer than $\sim\sigma_s$ survives). In a learnable bank that floor is just the lower edge of the scale range, so smoothing's role becomes *learned*, not guessed. **There is no `smooth_sigma` parameter in OrCaNN.**
+Hence $`\nabla^2 G_{\sigma_d} *(G_{\sigma_s} * I) = \nabla^2 G_{\sqrt{\sigma_s^2+\sigma_d^2}} * I`$. The hand-tuned smoothing was never outside the convolution — it shifted the LoG's effective scale and set a hard floor (nothing finer than $`\sim\sigma_s`$ survives). In a learnable bank that floor is just the lower edge of the scale range, so smoothing's role becomes *learned*, not guessed. **There is no `smooth_sigma` parameter in OrCaNN.**
 
 ### 3.3 The one part that does **not** fold in — and the covariance view
 
-The projection is nonlinear, and $\max(\mathrm{smooth}(\cdot))\neq\mathrm{smooth}(\max(\cdot))$. The obstruction splits by the **algebraic order** of the projection:
+The projection is nonlinear, and $`\max(\mathrm{smooth}(\cdot))\neq\mathrm{smooth}(\max(\cdot))`$. The obstruction splits by the **algebraic order** of the projection:
 
-- **Mean (linear).** Folds trivially: per-frame and post-projection smoothing are identical; the cascade is a single LoG at $\sqrt{\sigma_s^2+\sigma_d^2}$ on $\bar y$.
-- **Std / local-correlation (quadratic).** Fold cleanly, but onto the **covariance operator**, not the image. With $f=G_\sigma *_x Y$,
+- **Mean (linear).** Folds trivially: per-frame and post-projection smoothing are identical; the cascade is a single LoG at $`\sqrt{\sigma_s^2+\sigma_d^2}`$ on $`\bar y`$.
+- **Std / local-correlation (quadratic).** Fold cleanly, but onto the **covariance operator**, not the image. With $`f=G_\sigma *_x Y`$,
 
-$$
+```math
 \mathrm{var}_t f(x)\ =\ \big[(G_\sigma\otimes G_\sigma)\,C\big](x,x)\ -\ \big[(G_\sigma * \bar y)(x)\big]^2 ,
-$$
+```
 
-i.e. smooth $C(u,v)$ in **both** spatial slots, read the diagonal, subtract the smoothed-mean squared. *(Verified numerically: direct vs covariance-operator form agree to $3\times10^{-16}$.)* The energy-feature / Wiener–Khinchin principle: a quadratic feature of a linear-filter output is a linear functional of the autocorrelation.
+i.e. smooth $`C(u,v)`$ in **both** spatial slots, read the diagonal, subtract the smoothed-mean squared. *(Verified numerically: direct vs covariance-operator form agree to $`3\times10^{-16}`$.)* The energy-feature / Wiener–Khinchin principle: a quadratic feature of a linear-filter output is a linear functional of the autocorrelation.
 - **Max (order statistic).** Genuinely irreducible — outside the moment algebra. This is **why max is a separately-computed channel** (§3.4), not something folded into the convolution.
 
 ### 3.4 The detector is a hierarchy of temporal moments of one band-passed movie
 
-Applying the LoG **per frame**, before the nonlinearity, unifies smoothing and detection (the LoG's own Gaussian *is* the per-frame smoothing). What was a single scattering coefficient is, in general, a **ladder of temporal statistics of the same band-passed movie $L=\nabla^2 G_\sigma *_x Y$**, the pooling statistic indexing the channel — all sharing one learnable $\nabla^2 G$ bank:
+Applying the LoG **per frame**, before the nonlinearity, unifies smoothing and detection (the LoG's own Gaussian *is* the per-frame smoothing). What was a single scattering coefficient is, in general, a **ladder of temporal statistics of the same band-passed movie $`L=\nabla^2 G_\sigma *_x Y`$**, the pooling statistic indexing the channel — all sharing one learnable $`\nabla^2 G`$ bank:
 
 | Channel | Pooling | Detects | Role |
 |---|---|---|---|
-| **structural** | 0th moment: $\mathrm{mean}_t L = \nabla^2 G_\sigma*\bar y$ | all visible somata (active or silent) | **the annotation target** |
-| **max** | $L^\infty$: $\nabla^2 G_\sigma$ on a robust max projection | sparse, low-baseline cells | the ROI-drawing substrate |
-| **variance** | 2nd, diagonal: $\mathrm{var}_t L$ | active blobs | activity feature |
+| **structural** | 0th moment: $`\mathrm{mean}_t L = \nabla^2 G_\sigma*\bar y`$ | all visible somata (active or silent) | **the annotation target** |
+| **max** | $`L^\infty`$: $`\nabla^2 G_\sigma`$ on a robust max projection | sparse, low-baseline cells | the ROI-drawing substrate |
+| **variance** | 2nd, diagonal: $`\mathrm{var}_t L`$ | active blobs | activity feature |
 | **coherence** | 2nd, off-diagonal (§3.5) | coherent activity | noise-robust activity feature |
 
-The **structural** channel is the LoG of the mean image and is the primary detector, because the manual ROIs mark every visible cell (§3.7). The **max** channel is the irreducible order statistic of §3.3, computed explicitly as $\nabla^2 G_\sigma$ applied to a **top-$k$ robust max projection** ($k$-th largest $\approx$ the $(1{-}q)$ percentile, default $q{=}0.99$; top-$k$ is a partial sort, ~20× faster than `quantile`, and rejects single-frame hotspots without per-frame smoothing). It matches the substrate the annotators drew on and surfaces sparse low-baseline firers invisible to mean/variance. **Variance** uses the centred 2nd moment because $\nabla^2 G$ is zero-mean, so subtracting $\mathrm{mean}_t L$ removes static structure and isolates *active* blobs.
+The **structural** channel is the LoG of the mean image and is the primary detector, because the manual ROIs mark every visible cell (§3.7). The **max** channel is the irreducible order statistic of §3.3, computed explicitly as $`\nabla^2 G_\sigma`$ applied to a **top-$`k`$ robust max projection** ($`k`$-th largest $`\approx`$ the $`(1{-}q)`$ percentile, default $`q{=}0.99`$; top-$`k`$ is a partial sort, ~20× faster than `quantile`, and rejects single-frame hotspots without per-frame smoothing). It matches the substrate the annotators drew on and surfaces sparse low-baseline firers invisible to mean/variance. **Variance** uses the centred 2nd moment because $`\nabla^2 G`$ is zero-mean, so subtracting $`\mathrm{mean}_t L`$ removes static structure and isolates *active* blobs.
 
 Default configuration: `structural + max + variance` on, coherence off.
 
@@ -109,16 +109,16 @@ Default configuration: `structural + max + variance` on, coherence off.
 
 The variance channel is the **diagonal** of the band-passed temporal covariance; a faint cell competes against the full noise variance. The **off-diagonal** has no such floor:
 
-$$
+```math
 C_{\mathrm{coh}}(x,\sigma)\ =\ \frac{1}{|\Delta|}\sum_{\delta\in\Delta}\mathrm{Cov}_t\!\big(L(x,\cdot),\,L(x{+}\delta,\cdot)\big).
-$$
+```
 
-For spatially-independent noise $\mathbb{E}[\mathrm{Cov}_t]\approx 0$ ($\delta\neq0$), so a faint-but-coherent cell stands out even when buried in variance. This is the principled, in-framework form of the old "local correlation image," and it cannot be reduced to a per-frame filter (off-diagonal information needs cross-pixel temporal products). **Empirical finding (synthetic):** helps faint-cell recall in a moderate-noise band ($0.40\to0.60$ at noise sd $0.12$), neutral elsewhere, never harmful; the high-noise tie is partly a short-recording artefact ($\mathrm{Var}$ of the estimate $\propto 1/T$), so long real recordings should widen the useful regime. **Opt-in; the real spatial harness decides.**
+For spatially-independent noise $`\mathbb{E}[\mathrm{Cov}_t]\approx 0`$ ($`\delta\neq0`$), so a faint-but-coherent cell stands out even when buried in variance. This is the principled, in-framework form of the old "local correlation image," and it cannot be reduced to a per-frame filter (off-diagonal information needs cross-pixel temporal products). **Empirical finding (synthetic):** helps faint-cell recall in a moderate-noise band ($`0.40\to0.60`$ at noise sd $`0.12`$), neutral elsewhere, never harmful; the high-noise tie is partly a short-recording artefact ($`\mathrm{Var}`$ of the estimate $`\propto 1/T`$), so long real recordings should widen the useful regime. **Opt-in; the real spatial harness decides.**
 
 ### 3.6 Learnable realisation
 
-- **`ParametricLoG2d`** generates $K$ kernels from learnable $\log\sigma$: $-\sigma^2\nabla^2 G_\sigma$ (bright blob → positive), demeaned (DC rejection). Only the scales are free. Shared across all channels. *Note:* the leading $\sigma^2$ is the conventional scale-normalisation, but in practice it does **not** equalise peak response across scales (empirically response grows with $\sigma$ rather than peaking at the matching blob size); size discrimination is carried by the learned head combining all $K$ channels and by the spatial extent of the response, not by a single winning scale.
-- **Head:** per-channel **RMS normalisation** (heavy-tailed scattering coefficients; RMS is stable for the zero-mean structural channel where mean-normalisation would blow up) → $1\times1$ across channels → $3\times3$ refine → $1\times1$ → cellness logit. Replaces the hand-set intensity/contrast/local-max gates. ~2.5k trainable parameters.
+- **`ParametricLoG2d`** generates $`K`$ kernels from learnable $`\log\sigma`$: $`-\sigma^2\nabla^2 G_\sigma`$ (bright blob → positive), demeaned (DC rejection). Only the scales are free. Shared across all channels. *Note:* the leading $`\sigma^2`$ is the conventional scale-normalisation, but in practice it does **not** equalise peak response across scales (empirically response grows with $`\sigma`$ rather than peaking at the matching blob size); size discrimination is carried by the learned head combining all $`K`$ channels and by the spatial extent of the response, not by a single winning scale.
+- **Head:** per-channel **RMS normalisation** (heavy-tailed scattering coefficients; RMS is stable for the zero-mean structural channel where mean-normalisation would blow up) → $`1\times1`$ across channels → $`3\times3`$ refine → $`1\times1`$ → cellness logit. Replaces the hand-set intensity/contrast/local-max gates. ~2.5k trainable parameters.
 - **Footprints (replaces Otsu entirely):** thresholded cellness assigned to the nearest peak → irregular per-instance soft masks; non-circular boundaries preserved, but the boundary is *learned from annotations*, not assumed bimodal. Optional **activity-gating** sharpens each footprint with its own top-activity frames — the seam where the temporal stage can later drive frame selection.
 - **Detection threshold** is one inference scalar (`det_threshold`, default 0.5) + `min_distance`, not a per-blob Otsu computation.
 - **Radius bank** seeded `auto` from the annotation radius distribution — the ROIs carry the cell sizes, so pixel-size metadata is not needed.
@@ -137,24 +137,24 @@ A bank of **fixed, symmetric** Ricker wavelets, ridge extraction, and a normalis
 
 ### 4.2 The shape-parameterised mother — a rotation in the (∇G, ∇²G) plane
 
-$$
+```math
 \psi_\theta(t)\ =\ \cos\theta\,R(t)\ +\ \sin\theta\,D(t),\qquad
 R\ \propto\ \big(1-\tfrac{t^2}{a^2}\big)e^{-t^2/2a^2}\ (-\nabla^2 G),\quad
 D\ \propto\ \tfrac{t}{a}\,e^{-t^2/2a^2}\ (\nabla G),
-$$
+```
 
-demeaned and unit-$L^2$ normalised. $\theta=0\Rightarrow$ pure Ricker $\Rightarrow$ the exact 1-D twin of the spatial LoG (unification holds at the symmetric setting). Both $R$ and $D$ integrate to zero, so $\psi_\theta$ is zero-mean for **all** $\theta$ — admissibility and DC rejection are free. $\theta\neq0$ tilts the lobes into the matched detector for an asymmetric transient.
+demeaned and unit-$`L^2`$ normalised. $`\theta=0\Rightarrow`$ pure Ricker $`\Rightarrow`$ the exact 1-D twin of the spatial LoG (unification holds at the symmetric setting). Both $`R`$ and $`D`$ integrate to zero, so $`\psi_\theta`$ is zero-mean for **all** $`\theta`$ — admissibility and DC rejection are free. $`\theta\neq0`$ tilts the lobes into the matched detector for an asymmetric transient.
 
-**Why only time gets the extra DoF.** Spatial blobs are isotropic → pure symmetric $\nabla^2 G$, scales only. Temporal transients are asymmetric → one shape angle. A genuinely multi-shape regime (e.g. a symmetric burst envelope coexisting with an asymmetric somatic transient) would justify a **small structured set** of mothers, each still dilated across scale — never an unstructured dictionary, and only if the data's residuals demand it.
+**Why only time gets the extra DoF.** Spatial blobs are isotropic → pure symmetric $`\nabla^2 G`$, scales only. Temporal transients are asymmetric → one shape angle. A genuinely multi-shape regime (e.g. a symmetric burst envelope coexisting with an asymmetric somatic transient) would justify a **small structured set** of mothers, each still dilated across scale — never an unstructured dictionary, and only if the data's residuals demand it.
 
 ### 4.3 Scale, timescale, transform
 
-$\lambda = 2\pi a/\sqrt{2.5}\approx 3.974\,a$ samples (Torrence & Compo, $m=2$); $\tau=\lambda/f_s$. Transform $W(a,t)=(\psi_{\theta,a}*x)(t)$.
+$`\lambda = 2\pi a/\sqrt{2.5}\approx 3.974\,a`$ samples (Torrence & Compo, $`m=2`$); $`\tau=\lambda/f_s`$. Transform $`W(a,t)=(\psi_{\theta,a}*x)(t)`$.
 
 ### 4.4 What is learned vs geometry
 
-- **Rate head (supervised):** learned map from the multi-scale response to a non-negative **per-bin rate** $\hat r=\mathrm{softplus}(\text{head}(W))$, trained on resampled public spike trains. Loss $=\text{MSE}(\hat r,r) + (1-\mathrm{corr}(\hat r,r))$. ~1.7k params.
-- **Duration (geometry, label-free):** soft-argmax over scale of $|W(\cdot,b)|$ at each event bin → $\hat\tau(b)=\exp(\sum_k w_k\log\tau_k)$, read with the *asymmetric* mother. **$\hat\tau$ is an inflated multiple of the decay constant $\tau$ (≈5×; ≈8× in synthetic tests), not $\tau$ itself** — faithful in ordering/separation, not absolute seconds.
+- **Rate head (supervised):** learned map from the multi-scale response to a non-negative **per-bin rate** $`\hat r=\mathrm{softplus}(\text{head}(W))`$, trained on resampled public spike trains. Loss $`=\text{MSE}(\hat r,r) + (1-\mathrm{corr}(\hat r,r))`$. ~1.7k params.
+- **Duration (geometry, label-free):** soft-argmax over scale of $`|W(\cdot,b)|`$ at each event bin → $`\hat\tau(b)=\exp(\sum_k w_k\log\tau_k)`$, read with the *asymmetric* mother. **$`\hat\tau`$ is an inflated multiple of the decay constant $`\tau`$ (≈5×; ≈8× in synthetic tests), not $`\tau`$ itself** — faithful in ordering/separation, not absolute seconds.
 
 Rate (supervised) and duration (geometry) are on separate paths so the rate head cannot distort the duration read-out, and duration needs no labels (none exist).
 
@@ -170,7 +170,7 @@ Normalising to unit noise makes the model invariant to absolute noise level — 
 
 ### 4.6 Discrete transient extraction (post-hoc, not learned)
 
-The model emits a continuous rate; discrete transients are extracted from it by `detect_transients`: a height floor (a low percentile of the rate, gating quiet baseline) **and** a prominence requirement (`min_prominence`, in rate units — the analogue of OASIS's $s_{\min}$: a peak must rise clearly above its local surroundings), with a minimum inter-event spacing. Prominence is the main knob and removes the over-firing that a fraction-of-max threshold produces on busy ROIs. **Caveat:** the threshold is *absolute* in CASCADE-calibrated rate units, which is the part least likely to transfer to organoid Fluo-4. The robust options are a relative threshold (e.g. $k\cdot$noise per recording, or the valley of the per-recording prominence histogram) and leaning on continuous-rate measures rather than absolute event counts for cross-domain analysis.
+The model emits a continuous rate; discrete transients are extracted from it by `detect_transients`: a height floor (a low percentile of the rate, gating quiet baseline) **and** a prominence requirement (`min_prominence`, in rate units — the analogue of OASIS's $`s_{\min}`$: a peak must rise clearly above its local surroundings), with a minimum inter-event spacing. Prominence is the main knob and removes the over-firing that a fraction-of-max threshold produces on busy ROIs. **Caveat:** the threshold is *absolute* in CASCADE-calibrated rate units, which is the part least likely to transfer to organoid Fluo-4. The robust options are a relative threshold (e.g. $`k\cdot`$noise per recording, or the valley of the per-recording prominence histogram) and leaning on continuous-rate measures rather than absolute event counts for cross-domain analysis.
 
 ---
 
@@ -190,12 +190,12 @@ Train on all-but-one indicator, test on the held-out one. **Transfer gap** = wit
 
 ## 6. The inference path
 
-$$
+```math
 Y\ \xrightarrow{\text{Stage 1 (scattering detector, raw movie)}}\ \text{cellness}
 \ \xrightarrow{\text{peaks + nearest-centroid, activity-gated}}\ A_i
 \ \xrightarrow{\ C_i=\frac{\sum_x A_i(x)Y(x,t)}{\sum_x A_i(x)}\ }\ C_i
 \ \xrightarrow{\text{standardize\_trace}}\ \xrightarrow{\text{Stage 2}}\ \hat r_i,\ \hat\tau_i
-$$
+```
 
 A single per-recording process (`scripts/run_infer.py`) runs the whole chain, composing the spatial detector, the non-learned extraction helpers (`extract.py`), and the shared `detect_transients`. The spatial detector consumes the **raw movie directly** (no projection step). Traces are standardised by the same `standardize_trace` the temporal model trained on. Silent cells flow through and yield ~0 rate. The two trained stages drop in unchanged.
 
@@ -203,12 +203,12 @@ A single per-recording process (`scripts/run_infer.py`) runs the whole chain, co
 
 ## 7. How we got here — the decision lineage
 
-1. **Unification.** LoG (space) and Ricker (time) are the same $\nabla^2 G$ → one operator, two stages.
+1. **Unification.** LoG (space) and Ricker (time) are the same $`\nabla^2 G`$ → one operator, two stages.
 2. **Ground-truth split.** Spatial = in-domain ROIs; temporal = domain-mismatched public spikes → resample + LOIO first, synthetic fallback. Different datasets ⇒ separate training ⇒ separable design.
 3. **Single generating function, not a filter bank** — to preserve the unification and the interpretable duration axis. Shape-parameterised in time (asymmetry angle) to fix the symmetric-Ricker bias; pure symmetric in space.
 4. **Per-frame smoothing → covariance/scattering decomposition** → detector as a hierarchy of temporal moments of the band-passed movie; per-frame smoothing absorbed into the scale bank.
 5. **All-cells annotation target** → the **structural (0th-moment) channel** becomes the primary detector; activity channels become features.
-6. **ROIs drawn on the max projection** → the **max ($L^\infty$) channel** (top-$k$ robust max), the irreducible order statistic, matching the annotation substrate and surfacing sparse cells.
+6. **ROIs drawn on the max projection** → the **max ($`L^\infty`$) channel** (top-$`k`$ robust max), the irreducible order statistic, matching the annotation substrate and surfacing sparse cells.
 7. **Coherence channel** — in-framework faint-cell fix; conditional, opt-in.
 8. **ΔF/F unified** into one `standardize_trace` across training and inference (noise-invariance by normalisation).
 
@@ -237,13 +237,13 @@ End state: both stages are the same operator — learnable derivative-of-Gaussia
 **Scale/robustness hardening (verified):**
 - **GPU-correct:** training detects CUDA and moves model + batches to device; kernels/accumulators follow parameter device.
 - **Bounded memory:** recordings stream from disk one at a time; per-chunk LoG response ~101 MB at 512² (ample on an 80 GB A100). Patch training (default 128 px, 16 patches/recording, 256 energy frames) gives field coverage with bounded cost.
-- **Fast max:** top-$k$ (0.28 s) replaces `torch.quantile` (5.9 s) at realistic size.
+- **Fast max:** top-$`k`$ (0.28 s) replaces `torch.quantile` (5.9 s) at realistic size.
 - **Checkpoint every epoch** so a queue-killed job is not a total loss.
-- **`.nd2` reader** via the `nd2` package, using named axes (`sizes`) to form $(T,H,W)$; multi-channel/Z/point axes take index 0 with a warning.
+- **`.nd2` reader** via the `nd2` package, using named axes (`sizes`) to form $`(T,H,W)`$; multi-channel/Z/point axes take index 0 with a warning.
 - **Stable model persistence.** Models are saved as `{kind, config, state_dict}` (plain data + tensors, via `orcann.io`), not pickled objects, so a saved model loads after a package rename or a class refactor (a later constructor arg with a default is filled in). Whole-object `torch.save(model)` breaks on both.
 - Inference runs on CPU (frees the GPU queue; loads models with `map_location="cpu"`).
 
-**Per-recording outputs.** Each recording produces `run_<JOBID>/<recording>/` with two folders. `data/`: `spatial_footprints.npz`, `centroids.npy`, `temporal_traces.npy`, `rates.npy`, `events.npz` (long-format: `roi, time_s, duration_s, amplitude`), `max_projection.npy`, `meta.json`. `figures/`: one `roi_<i>.png` per ROI (trace + scalogram + rate) and `max_projection_detections.png` (centroids + footprint contours on the max image). The array files share the ROI axis; `events.npz` rows index into it. The cross-recording group analysis reads this contract and is a separate module. Annotation intake supports ImageJ/FIJI `RoiSet.zip` (rasterised with explicit $(x,y)\to(\text{col},\text{row})$ handling); `scripts/check_annotation.py` overlays it on the max projection as the orientation pre-flight.
+**Per-recording outputs.** Each recording produces `run_<JOBID>/<recording>/` with two folders. `data/`: `spatial_footprints.npz`, `centroids.npy`, `temporal_traces.npy`, `rates.npy`, `events.npz` (long-format: `roi, time_s, duration_s, amplitude`), `max_projection.npy`, `meta.json`. `figures/`: one `roi_<i>.png` per ROI (trace + scalogram + rate) and `max_projection_detections.png` (centroids + footprint contours on the max image). The array files share the ROI axis; `events.npz` rows index into it. The cross-recording group analysis reads this contract and is a separate module. Annotation intake supports ImageJ/FIJI `RoiSet.zip` (rasterised with explicit $`(x,y)\to(\text{col},\text{row})`$ handling); `scripts/check_annotation.py` overlays it on the max projection as the orientation pre-flight.
 
 **Status:** every module smoke, every runner self-test, all shell scripts, and a realistic-scale forward+backward pass clean; edge cases (flat/silent trace, zero detection) produce no NaN/crash. **No real *organoid* recording trained on or evaluated yet** (temporal LOIO ran on real CASCADE ground truth; spatial + organoid domain pending).
 
@@ -253,12 +253,12 @@ End state: both stages are the same operator — learnable derivative-of-Gaussia
 
 - **2 Hz timing.** Sub-frame spike timing is not identifiable from 2 Hz input. Temporal target is a per-bin rate; discrete spikes are a downstream thresholding step.
 - **Detection target settled, not free.** The detector matches the all-somata annotations via the structural channel; this was a correction (an activity-only detector would have under-counted silent cells). Active/silent is reported as a derived label.
-- **Max is in, as an explicit channel** (not dropped). It is the irreducible order statistic, computed as $\nabla^2 G$ on a top-$k$ robust max projection, and matches the ROI-drawing substrate.
+- **Max is in, as an explicit channel** (not dropped). It is the irreducible order statistic, computed as $`\nabla^2 G`$ on a top-$`k`$ robust max projection, and matches the ROI-drawing substrate.
 - **Temporal domain shift.** Public ground truth is GCaMP/OGB, 2-photon, in-vivo cortical — not Fluo-4 widefield organoid. LOIO (completed on CASCADE) is a **qualified pass**: transfer is strong for mainstream GECIs/dyes and GCaMP8 (often held-out ≈ within-train), weak for SST/VIP interneurons, and a clear fail for spinal cord (excluded as a distinct domain). What transfers is the transient *shape*; the *absolute rate scale* is CASCADE-calibrated and is the part that does not — so absolute event thresholds and counts are the fragile quantities on organoid data (see §4.6).
-- **Scale normalisation is nominal, not effective.** The LoG bank carries the $\sigma^2$ factor but per-scale peak response is not equalised across scales (it grows with $\sigma$); size discrimination is done by the learned head, not by scale-selection. The duration read-out and detector both rely on the head/extent, not on a winning scale.
+- **Scale normalisation is nominal, not effective.** The LoG bank carries the $`\sigma^2`$ factor but per-scale peak response is not equalised across scales (it grows with $`\sigma`$); size discrimination is done by the learned head, not by scale-selection. The duration read-out and detector both rely on the head/extent, not on a winning scale.
 - **Duration ≠ τ.** Reported durations are wavelet characteristic timescales — an inflated, roughly constant multiple of the decay constant. Ordering/separation faithful; absolute seconds not.
 - **Coherence is regime-dependent.** Helps in moderate noise, neutral elsewhere, never hurts; real-data value unmeasured.
-- **ROI ↔ movie orientation is the top unverified risk.** ROIs were drawn on a max-projection summary; if its $(Y,X)$ orientation differs from the loader's (a transpose/flip/crop when the summary was made), targets are mislocated and training fails *silently* (low score, no error). Must be confirmed by overlaying ROI centroids on `movie.max(0)` before trusting any spatial number.
+- **ROI ↔ movie orientation is the top unverified risk.** ROIs were drawn on a max-projection summary; if its $`(Y,X)`$ orientation differs from the loader's (a transpose/flip/crop when the summary was made), targets are mislocated and training fails *silently* (low score, no error). Must be confirmed by overlaying ROI centroids on `movie.max(0)` before trusting any spatial number.
 - **`.nd2` reader unverified on a real file** (no `.nd2` available during development); confirm axes and the orientation overlay on the first real recording.
 - **Temporal validation in-domain is unavailable** with current data; checkable only against the old wavelet/OASIS method or future high-rate organoid acquisition.
 - **What has and hasn't seen real data.** The temporal LOIO ran on real public CASCADE ground truth (§5.2 verdict above). The spatial stage and the organoid (Fluo-4) domain are still synthetic/pending: no annotated organoid recording has been trained on or evaluated, so spatial accuracy numbers and in-domain temporal numbers await the real harnesses.
@@ -267,7 +267,7 @@ End state: both stages are the same operator — learnable derivative-of-Gaussia
 
 ## 10. References
 
-- Marr D, Hildreth E (1980). Theory of edge detection. *Proc. R. Soc. Lond. B* — the $\nabla^2 G$ operator.
+- Marr D, Hildreth E (1980). Theory of edge detection. *Proc. R. Soc. Lond. B* — the $`\nabla^2 G`$ operator.
 - Lindeberg T (1998). Feature detection with automatic scale selection. *IJCV* — scale-normalised LoG.
 - Torrence C, Compo GP (1998). A Practical Guide to Wavelet Analysis. *BAMS* — scale↔Fourier-period.
 - Friedrich J, Zhou P, Paninski L (2017). Fast online deconvolution of calcium imaging data. *PLoS Comp. Biol.* — OASIS.
