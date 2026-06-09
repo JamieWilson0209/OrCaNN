@@ -191,10 +191,13 @@ Train on all-but-one indicator, test on the held-out one. **Transfer gap** = wit
 ## 6. The inference path
 
 ```math
-Y\ \xrightarrow{\text{Stage 1 (scattering detector, raw movie)}}\ \text{cellness}
-\ \xrightarrow{\text{peaks + nearest-centroid, activity-gated}}\ A_i
-\ \xrightarrow{\ C_i=\frac{\sum_x A_i(x)Y(x,t)}{\sum_x A_i(x)}\ }\ C_i
-\ \xrightarrow{\text{standardize\_trace}}\ \xrightarrow{\text{Stage 2}}\ \hat r_i,\ \hat\tau_i
+\begin{aligned}
+Y
+&\xrightarrow{\ \text{Stage 1: scattering detector, raw movie}\ } \text{cellness} \\
+&\xrightarrow{\ \text{peaks + nearest-centroid, activity-gated}\ } A_i \\
+&\xrightarrow{\ C_i=\frac{\sum_x A_i(x)\,Y(x,t)}{\sum_x A_i(x)}\ } C_i \\
+&\xrightarrow{\ \text{standardize\_trace}\ }\ \xrightarrow{\ \text{Stage 2}\ }\ \hat r_i,\ \hat\tau_i
+\end{aligned}
 ```
 
 A single per-recording process (`scripts/run_infer.py`) runs the whole chain, composing the spatial detector, the non-learned extraction helpers (`extract.py`), and the shared `detect_transients`. The spatial detector consumes the **raw movie directly** (no projection step). Traces are standardised by the same `standardize_trace` the temporal model trained on. Silent cells flow through and yield ~0 rate. The two trained stages drop in unchanged.
