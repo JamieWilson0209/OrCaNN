@@ -29,13 +29,17 @@ The single object underneath the whole project is the **normalised derivative-of
 The classical pipeline used two methods that looked unrelated: **Laplacian-of-Gaussian (LoG) blob detection** to find neurons in space, and a **Ricker (Mexican-hat) wavelet transform** to find transients in time. They are the same operator.
 
 The Ricker wavelet is the normalised negative second derivative of a Gaussian:
-```math
+
+$$
 \psi_{\text{Ricker}}(t)\ \propto\ \Big(1-\tfrac{t^2}{a^2}\Big)e^{-t^2/2a^2}\ =\ -\,a^2\,\frac{d^2}{dt^2}G_a(t).
-```
+$$
+
 The LoG is the same thing in two dimensions:
-```math
+
+$$
 \nabla^2 G_\sigma(x)\ =\ \frac{|x|^2-2\sigma^2}{\sigma^4}\,G_\sigma(x).
-```
+$$
+
 Both are $\nabla^2 G$. LoG sweeps a **spatial** scale $\sigma$ for blobs of varying radius; the Ricker CWT sweeps a **temporal** scale $a$ for transients of varying duration. A blob of radius $r$ is matched at $\sigma=r/\sqrt2$; a transient at the $a$ whose Fourier period equals its width.
 
 **Design commitment that follows.** The architecture is *one generating function deployed across a scale group*, not a free bank of independent filters. A learnable bank that drifted from $\nabla^2 G$ would still detect things, but it would dissolve the unification, make the duration axis uninterpretable, and break the claim that the two stages are the same operator. Every learnable component **generates** its kernels from $\nabla^2 G$ with a few interpretable parameters (scales, plus one temporal asymmetry angle); the weights are never free. Both trained stages turn out to share the shape *learnable derivative-of-Gaussian wavelet → nonlinearity → head*.
@@ -59,9 +63,10 @@ The two stages have radically different supervision, and the asymmetry is struct
 ### 3.1 The classical pipeline, stated as operators
 
 Per-frame Gaussian smoothing at $\sigma_s$ → nonlinear temporal projection $R_t\in\{\max,\ \mathrm{std},\ \text{local-corr}\}$ → LoG detection at $\sigma_d$ → Otsu contour per seed:
-```math
+
+$$
 D(x)\ =\ \nabla^2 G_{\sigma_d} *_x\ R_t\big[(G_{\sigma_s} *_x Y)(\cdot,t)\big].
-```
+$$
 
 ### 3.2 Per-frame smoothing **is** part of the LoG
 
@@ -77,9 +82,11 @@ The projection is nonlinear, and $\max(\mathrm{smooth}(\cdot))\neq\mathrm{smooth
 
 - **Mean (linear).** Folds trivially: per-frame and post-projection smoothing are identical; the cascade is a single LoG at $\sqrt{\sigma_s^2+\sigma_d^2}$ on $\bar y$.
 - **Std / local-correlation (quadratic).** Fold cleanly, but onto the **covariance operator**, not the image. With $f=G_\sigma *_x Y$,
-```math
+
+$$
 \operatorname{var}_t f(x)\ =\ \big[(G_\sigma\otimes G_\sigma)\,C\big](x,x)\ -\ \big[(G_\sigma * \bar y)(x)\big]^2 ,
-```
+$$
+
 i.e. smooth $C(u,v)$ in **both** spatial slots, read the diagonal, subtract the smoothed-mean squared. *(Verified numerically: direct vs covariance-operator form agree to $3\times10^{-16}$.)* The energy-feature / Wiener–Khinchin principle: a quadratic feature of a linear-filter output is a linear functional of the autocorrelation.
 - **Max (order statistic).** Genuinely irreducible — outside the moment algebra. This is **why max is a separately-computed channel** (§3.4), not something folded into the convolution.
 
@@ -101,9 +108,11 @@ Default configuration: `structural + max + variance` on, coherence off.
 ### 3.5 The correlation-energy (coherence) channel
 
 The variance channel is the **diagonal** of the band-passed temporal covariance; a faint cell competes against the full noise variance. The **off-diagonal** has no such floor:
-```math
+
+$$
 C_{\mathrm{coh}}(x,\sigma)\ =\ \frac{1}{|\Delta|}\sum_{\delta\in\Delta}\operatorname{Cov}_t\!\big(L(x,\cdot),\,L(x{+}\delta,\cdot)\big).
-```
+$$
+
 For spatially-independent noise $\mathbb{E}[\operatorname{Cov}_t]\approx 0$ ($\delta\neq0$), so a faint-but-coherent cell stands out even when buried in variance. This is the principled, in-framework form of the old "local correlation image," and it cannot be reduced to a per-frame filter (off-diagonal information needs cross-pixel temporal products). **Empirical finding (synthetic):** helps faint-cell recall in a moderate-noise band ($0.40\to0.60$ at noise sd $0.12$), neutral elsewhere, never harmful; the high-noise tie is partly a short-recording artefact ($\operatorname{Var}$ of the estimate $\propto 1/T$), so long real recordings should widen the useful regime. **Opt-in; the real spatial harness decides.**
 
 ### 3.6 Learnable realisation
@@ -126,13 +135,14 @@ The annotations mark **all visible cells regardless of activity**. An activity-o
 
 A bank of **fixed, symmetric** Ricker wavelets, ridge extraction, and a normalised-correlation gate. Failure mode: a fast-rise/slow-decay calcium transient matches a symmetric Mexican hat progressively worse as the wavelet broadens, so slow asymmetric events slip the gate.
 
-### 4.2 The shape-parameterised mother — a rotation in the $(\nabla G,\nabla^2 G)$ plane
+### 4.2 The shape-parameterised mother — a rotation in the (∇G, ∇²G) plane
 
-```math
+$$
 \psi_\theta(t)\ =\ \cos\theta\,R(t)\ +\ \sin\theta\,D(t),\qquad
 R\ \propto\ \big(1-\tfrac{t^2}{a^2}\big)e^{-t^2/2a^2}\ (-\nabla^2 G),\quad
 D\ \propto\ \tfrac{t}{a}\,e^{-t^2/2a^2}\ (\nabla G),
-```
+$$
+
 demeaned and unit-$L^2$ normalised. $\theta=0\Rightarrow$ pure Ricker $\Rightarrow$ the exact 1-D twin of the spatial LoG (unification holds at the symmetric setting). Both $R$ and $D$ integrate to zero, so $\psi_\theta$ is zero-mean for **all** $\theta$ — admissibility and DC rejection are free. $\theta\neq0$ tilts the lobes into the matched detector for an asymmetric transient.
 
 **Why only time gets the extra DoF.** Spatial blobs are isotropic → pure symmetric $\nabla^2 G$, scales only. Temporal transients are asymmetric → one shape angle. A genuinely multi-shape regime (e.g. a symmetric burst envelope coexisting with an asymmetric somatic transient) would justify a **small structured set** of mothers, each still dilated across scale — never an unstructured dictionary, and only if the data's residuals demand it.
@@ -180,12 +190,13 @@ Train on all-but-one indicator, test on the held-out one. **Transfer gap** = wit
 
 ## 6. The inference path
 
-```math
+$$
 Y\ \xrightarrow{\text{Stage 1 (scattering detector, raw movie)}}\ \text{cellness}
 \ \xrightarrow{\text{peaks + nearest-centroid, activity-gated}}\ A_i
 \ \xrightarrow{\ C_i=\frac{\sum_x A_i(x)Y(x,t)}{\sum_x A_i(x)}\ }\ C_i
 \ \xrightarrow{\text{standardize\_trace}}\ \xrightarrow{\text{Stage 2}}\ \hat r_i,\ \hat\tau_i
-```
+$$
+
 A single per-recording process (`scripts/run_infer.py`) runs the whole chain, composing the spatial detector, the non-learned extraction helpers (`extract.py`), and the shared `detect_transients`. The spatial detector consumes the **raw movie directly** (no projection step). Traces are standardised by the same `standardize_trace` the temporal model trained on. Silent cells flow through and yield ~0 rate. The two trained stages drop in unchanged.
 
 ---
