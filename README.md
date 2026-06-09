@@ -9,8 +9,6 @@ The pipeline detects somata in a recording, extracts a fluorescence trace per
 cell, and estimates a per-bin event rate plus discrete transients — then a
 separate module aggregates across recordings for group analysis.
 
-Functionality is dependant on the indicator used - LoG usage is optimised for Fluo4, Shifted Gaussian Ring Filter/Fast Radial Symmetry Transform will be added after training verification for alternate indicators.
-
 ## The idea
 
 - **Space.** `ParametricLoG2d` is a learnable bank of scale-normalised LoG
@@ -37,11 +35,11 @@ cross-recording group analysis is separate.
 ## Install
 
 ```bash
-pip install -e .            # torch installed separately (see eddie/setup_eddie.sh)
+pip install -e .            # torch installed separately (see hpc/setup_hpc.sh)
 pip install -e ".[torch]"   # or pull a CPU/CUDA torch build yourself
 ```
 
-On the Edinburgh Eddie HPC cluster, see `eddie/README_EDDIE.md` for the
+On an SGE / Grid Engine HPC cluster, see `hpc/README_HPC.md` for the
 prefix-env setup and GPU/SGE specifics.
 
 ## Usage
@@ -97,3 +95,12 @@ figures/ roi_<i>.png (trace + scalogram + rate)   max_projection_detections.png
 - **Standing caveat** — the temporal model is trained on in-vivo 2-photon data;
   absolute rate scale on Fluo-4 organoid recordings is uncalibrated. Prefer
   continuous rate measures over absolute event counts for cross-domain analysis.
+
+## Tests
+
+```bash
+pytest -q            # or: python tests/test_smoke.py
+```
+
+Synthetic smoke/integration tests covering every module; no real data or GPU
+required.

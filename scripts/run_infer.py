@@ -28,6 +28,7 @@ from orcann.extract import _load_movie, soft_footprints, extract_traces
 from orcann.spatial_log import extract_instances
 from orcann.temporal_dog import detect_transients
 from orcann.figures import roi_figure, max_projection_figure
+from orcann.io import load_model
 
 
 def recording_id(path: str) -> str:
@@ -59,8 +60,8 @@ def main():
     rec = recording_id(a.movie)
     movie = _load_movie(a.movie)                                  # (T, H, W)
     T = movie.shape[0]
-    spatial = torch.load(a.spatial_model, map_location=device, weights_only=False).eval().to(device)
-    temporal = torch.load(a.temporal_model, map_location=device, weights_only=False).eval().to(device)
+    spatial = load_model(a.spatial_model, map_location=device).to(device)
+    temporal = load_model(a.temporal_model, map_location=device).to(device)
 
     # ── spatial ──
     with torch.no_grad():

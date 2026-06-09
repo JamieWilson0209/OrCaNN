@@ -289,7 +289,7 @@ def train_detector(sources: List[Source], channels: Dict[str, bool],
                 loss.backward(); opt.step()
             del rec                                                 # free movie before next
         if checkpoint_path:
-            torch.save(model, checkpoint_path)                      # resume-from / safety net
+            from orcann.io import save_model as _save_model; _save_model(model, checkpoint_path)                      # resume-from / safety net
     return model.eval()
 
 

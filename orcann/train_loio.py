@@ -23,7 +23,7 @@ implement it:
     documented and differs between datasets.
   * ``synthetic_indicator_bank`` — several "indicators" with distinct
     rise/decay kinetics, so the LOIO loop is fully testable without the
-    multi-GB download. Swap this for ``load_cascade_mat`` on Eddie.
+    multi-GB download. Swap this for ``load_cascade_mat`` with real CASCADE data on the cluster.
 
 The preprocessing is the honest-transfer recipe from the temporal stage:
 anti-aliased resample to the target rate, noise-match to a measured SD, and a

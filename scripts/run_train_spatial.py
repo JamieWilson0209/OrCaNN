@@ -95,7 +95,8 @@ def main():
     metrics = evaluate(model, val, loader=loader)
     print("held-out:", metrics)
 
-    torch.save(model, ckpt)
+    from orcann.io import save_model
+    save_model(model, ckpt)
     if a.report:
         os.makedirs(os.path.dirname(a.report), exist_ok=True)
         with open(a.report, "w") as f:

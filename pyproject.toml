@@ -19,7 +19,7 @@ dependencies = [
     "roifile>=2023.0",   # ImageJ/FIJI ROI sets (annotation intake)
 ]
 
-# torch is installed separately in setup_eddie.sh so the CUDA build can be
+# torch is installed separately in setup_hpc.sh so the CUDA build can be
 # matched to the cluster's driver/CUDA module rather than pinned here.
 [project.optional-dependencies]
 torch = ["torch>=2.1"]

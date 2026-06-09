@@ -28,7 +28,7 @@ set +e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODE_DIR="${CODE_DIR:-${SCRIPT_DIR}}"
-[ -f "${SCRIPT_DIR}/eddie/config.sh" ] && source "${SCRIPT_DIR}/eddie/config.sh"
+[ -f "${SCRIPT_DIR}/hpc/config.sh" ] && source "${SCRIPT_DIR}/hpc/config.sh"
 
 SCRATCH_DIR="${WORKSPACE:-$(pwd)}"
 OUTPUT_BASE="${OUTPUT_BASE:-${RESULTS_DIR:-${SCRATCH_DIR}/results}}"
@@ -54,8 +54,13 @@ INPUT="${INPUT:-movie}"          # movie = full pipeline (.nd2); traces = tempor
 # contended GPU queue). For GPU, set e.g. RES="-q gpu -l gpu=1 -l a100=true".
 H_RT="${H_RT:-04:00:00}"
 N_SLOTS="${N_SLOTS:-4}"
-H_RSS="${H_RSS:-8G}"
-RES="${RES:-#\$ -pe sharedmem ${N_SLOTS}\n#\$ -l h_rss=${H_RSS}}"
+H_RSS="${H_RSS:-8G}"              # per-slot resident memory; total = H_RSS x N_SLOTS
+# Optional h_vmem. Current scheduler convention is h_rss-only; the older
+# (heavily-tested) config also set h_vmem. Set e.g. H_VMEM=8G to include it if
+# your cluster still enforces virtual memory separately. Empty = omit (default).
+H_VMEM="${H_VMEM:-}"
+_VMEM_LINE=""; [ -n "${H_VMEM}" ] && _VMEM_LINE="\n#\$ -l h_vmem=${H_VMEM}"
+RES="${RES:-#\$ -pe sharedmem ${N_SLOTS}\n#\$ -l h_rss=${H_RSS}${_VMEM_LINE}}"
 
 COMMAND="${1:-}"; shift 2>/dev/null || true
 while [[ $# -gt 0 ]]; do

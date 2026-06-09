@@ -143,6 +143,8 @@ class TemporalRateModel(nn.Module):
     available via :meth:`response`.
     """
 
+    KIND = "temporal_rate"
+
     def __init__(
         self,
         timescales_s: Sequence[float],
@@ -152,6 +154,8 @@ class TemporalRateModel(nn.Module):
         **bank_kw,
     ) -> None:
         super().__init__()
+        self.config = {"timescales_s": list(timescales_s), "frame_rate": float(frame_rate),
+                       "hidden": hidden, "scale_dropout": scale_dropout, **bank_kw}
         self.bank = ParametricDoGWavelet1d(timescales_s, frame_rate, **bank_kw)
         k = len(timescales_s)
         # Scale-channel dropout: during training, randomly zero whole wavelet-scale

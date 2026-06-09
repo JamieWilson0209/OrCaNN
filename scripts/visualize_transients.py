@@ -25,6 +25,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from orcann.io import load_model
 from orcann.temporal_dog import standardize_trace
 from orcann.figures import draw_roi_panels
 
@@ -61,7 +62,7 @@ def main():
     a = ap.parse_args()
 
     traces = load_traces(a.traces)
-    model = torch.load(a.model, weights_only=False, map_location="cpu").eval()
+    model = load_model(a.model, map_location="cpu")
     fs = a.frame_rate
 
     if a.rois == "auto":

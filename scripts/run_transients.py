@@ -23,6 +23,7 @@ import argparse, json, os, time
 import numpy as np
 import torch
 
+from orcann.io import load_model
 from orcann.temporal_dog import detect_transients
 
 
@@ -58,7 +59,7 @@ def main():
     rec = recording_id(a.traces)
     traces = load_traces(a.traces)
     n_roi, T = traces.shape
-    model = torch.load(a.model, weights_only=False, map_location="cpu").eval()
+    model = load_model(a.model, map_location="cpu")
 
     rates = np.zeros((n_roi, T), dtype=np.float32)
     ev_roi, ev_t, ev_d, ev_a = [], [], [], []

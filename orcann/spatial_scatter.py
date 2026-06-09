@@ -67,6 +67,8 @@ class SpatialScatterDetector(nn.Module):
         Which temporal-moment channels to include (>=1).
     """
 
+    KIND = "spatial_scatter"
+
     def __init__(
         self,
         radii_px: Sequence[float] = (4, 6, 9, 13, 18),
@@ -83,6 +85,12 @@ class SpatialScatterDetector(nn.Module):
         corr_dirs: int = 8,
     ) -> None:
         super().__init__()
+        self.config = {"radii_px": list(radii_px), "hidden": hidden,
+                       "learnable_scales": learnable_scales, "n_energy_frames": n_energy_frames,
+                       "use_structural": use_structural, "use_max": use_max,
+                       "use_variance": use_variance, "use_correlation": use_correlation,
+                       "max_substrate": max_substrate, "max_q": max_q,
+                       "corr_radius": corr_radius, "corr_dirs": corr_dirs}
         self.log = ParametricLoG2d(radii_px, learnable_scales=learnable_scales)
         k = len(radii_px)
         self.use_structural = use_structural
