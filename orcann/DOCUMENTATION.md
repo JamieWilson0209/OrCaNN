@@ -256,7 +256,7 @@ End state: both stages are the same operator — learnable derivative-of-Gaussia
 
 ---
 
-## 9. Honesty ledger (consolidated caveats)
+## 9. Caveats
 
 - **2 Hz timing.** Sub-frame spike timing is not identifiable from 2 Hz input. Temporal target is a per-bin rate; discrete spikes are a downstream thresholding step.
 - **Detection target settled, not free.** The detector matches the all-somata annotations via the structural channel; this was a correction (an activity-only detector would have under-counted silent cells). Active/silent is reported as a derived label.
