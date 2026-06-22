@@ -16,11 +16,11 @@ from __future__ import annotations
 import torch
 
 from orcann.temporal_dog import TemporalRateModel
-from orcann.spatial_scatter import SpatialScatterDetector
+from orcann.spatial_seg import SpatialSegmenter
 
 _REGISTRY = {
     TemporalRateModel.KIND: TemporalRateModel,
-    SpatialScatterDetector.KIND: SpatialScatterDetector,
+    SpatialSegmenter.KIND: SpatialSegmenter,
 }
 
 

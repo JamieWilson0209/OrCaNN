@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
@@ -42,7 +42,7 @@ import numpy as np
 import torch
 
 from orcann.temporal_dog import (
-    TemporalRateModel, rate_loss, match_noise, _robust_sd, standardize_trace,
+    TemporalRateModel, rate_loss, match_noise, standardize_trace,
 )
 
 
@@ -58,10 +58,6 @@ class GroundTruthNeuron:
     spike_times_s: np.ndarray        # (n_spikes,) in seconds
     indicator: str                   # e.g. 'GCaMP6f', 'OGB-1', 'jRGECO1a'
     dataset_id: str = ""
-
-    @property
-    def duration_s(self) -> float:
-        return len(self.dff) / self.frame_rate
 
 
 # =============================================================================

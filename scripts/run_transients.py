@@ -21,7 +21,6 @@ is uncertain — prefer rate shape / event structure over absolute counts.
 import argparse, json, os, time
 
 import numpy as np
-import torch
 
 from orcann.io import load_model
 from orcann.temporal_dog import detect_transients

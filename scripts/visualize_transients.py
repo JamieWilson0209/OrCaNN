@@ -20,7 +20,6 @@ For each ROI it renders three stacked panels:
 import argparse, os
 
 import numpy as np
-import torch
 
 import matplotlib
 matplotlib.use("Agg")

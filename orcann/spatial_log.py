@@ -30,7 +30,7 @@ heatmap. So we are not blocked on which form the 85 annotated recordings use.
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Sequence, Tuple
 
 import numpy as np
 import torch
@@ -115,33 +115,6 @@ class ParametricLoG2d(nn.Module):
 # THE STAGE — input fusion -> LoG bank -> combination head -> cellness logits
 # =============================================================================
 
-def cellness_target(
-    shape: Tuple[int, int],
-    centroids: np.ndarray,
-    radii: Optional[Sequence[float]] = None,
-    default_radius: float = 8.0,
-) -> np.ndarray:
-    """Soft cellness heatmap in [0, 1] from instance centroids.
-
-    Masks and points reduce to the same target: instance masks contribute
-    their centroid (and a radius from √(area/π)); manual points contribute a
-    fixed-radius blob. A Gaussian (σ = radius/2) is stamped per instance and
-    the map is the per-pixel max, so overlapping cells do not sum past 1.
-    """
-    H, W = shape
-    heat = np.zeros((H, W), dtype=np.float32)
-    if len(centroids) == 0:
-        return heat
-    if radii is None:
-        radii = [default_radius] * len(centroids)
-    yy, xx = np.mgrid[0:H, 0:W]
-    for (cy, cx), r in zip(centroids, radii):
-        sig = max(1.0, float(r) / 2.0)
-        g = np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2.0 * sig * sig))
-        np.maximum(heat, g, out=heat)
-    return heat
-
-
 def centroids_from_masks(masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """(centroids, radii) from a (H, W) integer label image (0 = background)."""
     labels = np.unique(masks)
@@ -152,21 +125,6 @@ def centroids_from_masks(masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         cents.append((ys.mean(), xs.mean()))
         radii.append(math.sqrt(len(ys) / math.pi))
     return np.asarray(cents, dtype=np.float32), np.asarray(radii, dtype=np.float32)
-
-
-# =============================================================================
-# LOSS
-# =============================================================================
-
-def bce_dice_loss(logits: torch.Tensor, target: torch.Tensor,
-                  dice_w: float = 1.0) -> torch.Tensor:
-    """Pixelwise BCE + soft Dice on the cellness heatmap."""
-    bce = F.binary_cross_entropy_with_logits(logits, target)
-    p = torch.sigmoid(logits)
-    inter = (p * target).sum(dim=(-2, -1))
-    denom = p.sum(dim=(-2, -1)) + target.sum(dim=(-2, -1)) + 1e-6
-    dice = 1.0 - (2.0 * inter / denom).mean()
-    return bce + dice_w * dice
 
 
 # =============================================================================

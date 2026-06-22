@@ -38,7 +38,6 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -46,20 +45,19 @@ from orcann.spatial_log import ParametricLoG2d
 
 
 class SpatialScatterDetector(nn.Module):
-    """Per-frame learnable LoG; channels are temporal moments of the band-pass.
+    """Per-frame learnable LoG energy front-end (no detection head).
 
-    Detection runs on a hierarchy of temporal moments of the same ∇²G-filtered
-    movie (order [structural, variance, coherence]); see :meth:`energy`. The
-    structural (mean) channel detects all visible somata and matches manual
-    annotations that mark every cell regardless of activity; the variance and
-    coherence channels add activity information.
+    Produces a stack of temporal moments of the same ∇²G-filtered movie
+    (order [structural, max, variance, coherence]); see :meth:`energy`. The
+    structural (mean) channel responds to all visible somata; the max, variance
+    and coherence channels add activity information. The output is the feature
+    stack itself: :class:`~orcann.spatial_seg.SpatialSegmenter` consumes
+    ``energy()`` directly and supplies its own U-Net.
 
     Parameters
     ----------
     radii_px : sequence of float
         Initial neuron-radius bank (pixels); the σ-seeds, learnable.
-    hidden : int
-        Width of the small refinement head.
     n_energy_frames : int, optional
         If set and the movie has more frames, a random subset of this many
         frames estimates the moments — bounds compute on long recordings.
@@ -67,12 +65,9 @@ class SpatialScatterDetector(nn.Module):
         Which temporal-moment channels to include (>=1).
     """
 
-    KIND = "spatial_scatter"
-
     def __init__(
         self,
         radii_px: Sequence[float] = (4, 6, 9, 13, 18),
-        hidden: int = 16,
         learnable_scales: bool = True,
         n_energy_frames: Optional[int] = 256,
         use_structural: bool = True,
@@ -85,14 +80,13 @@ class SpatialScatterDetector(nn.Module):
         corr_dirs: int = 8,
     ) -> None:
         super().__init__()
-        self.config = {"radii_px": list(radii_px), "hidden": hidden,
+        self.config = {"radii_px": list(radii_px),
                        "learnable_scales": learnable_scales, "n_energy_frames": n_energy_frames,
                        "use_structural": use_structural, "use_max": use_max,
                        "use_variance": use_variance, "use_correlation": use_correlation,
                        "max_substrate": max_substrate, "max_q": max_q,
                        "corr_radius": corr_radius, "corr_dirs": corr_dirs}
         self.log = ParametricLoG2d(radii_px, learnable_scales=learnable_scales)
-        k = len(radii_px)
         self.use_structural = use_structural
         self.use_max = use_max
         self.use_variance = use_variance
@@ -102,14 +96,6 @@ class SpatialScatterDetector(nn.Module):
         self._offsets = self._make_offsets(corr_radius, corr_dirs) if use_correlation else []
         n_groups = use_structural + use_max + use_variance + use_correlation
         assert n_groups >= 1, "enable at least one channel"
-        n_ch = k * n_groups
-        self.head = nn.Sequential(
-            nn.Conv2d(n_ch, hidden, kernel_size=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(hidden, hidden, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(hidden, 1, kernel_size=1),
-        )
         self.n_energy_frames = n_energy_frames
 
     @staticmethod
@@ -180,14 +166,3 @@ class SpatialScatterDetector(nn.Module):
                 coh = coh + (sx[i] / T - mean * mr)            # Cov_t(L, L_δ)
             chans.append(coh / len(self._offsets))
         return torch.cat(chans, dim=1)
-
-    def forward(self, movie: torch.Tensor) -> torch.Tensor:
-        """(B, T, H, W) -> (B, 1, H, W) cellness logits."""
-        feats = self.energy(movie)
-        # Per-channel RMS normalisation: conditions the heavy-tailed energy
-        # channels for the head, and is stable for the structural channel too
-        # (∇²G·ȳ is spatially zero-mean, so mean-normalisation would blow up;
-        # RMS is always positive).
-        rms = feats.pow(2).mean(dim=(-2, -1), keepdim=True).sqrt()
-        feats = feats / (rms + 1e-6)
-        return self.head(feats)

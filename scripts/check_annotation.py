@@ -14,7 +14,7 @@ import argparse
 import numpy as np
 
 from orcann.extract import _load_movie
-from orcann.train_spatial import _load_annotation
+from orcann.annotations import _load_annotation
 from orcann.figures import max_projection_figure
 
 

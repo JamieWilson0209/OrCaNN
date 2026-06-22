@@ -24,18 +24,20 @@ import numpy as np
 # =============================================================================
 
 def _load_movie(path: str) -> np.ndarray:
+    guessed_order = True
     if path.endswith(".npy"):
         mv = np.asarray(np.load(path, mmap_mode="r"), dtype=np.float32)
     elif path.endswith((".tif", ".tiff")):
         import tifffile
         mv = tifffile.imread(path).astype(np.float32)
     elif path.endswith(".nd2"):
-        mv = _load_nd2(path)
+        mv = _load_nd2(path)            # axes assigned by name (T, Y, X)
+        guessed_order = False
     else:
         raise ValueError(f"unsupported movie format: {path}")
     if mv.ndim != 3:
         raise ValueError(f"expected a (T, H, W) movie, got shape {mv.shape} from {path}")
-    if mv.shape[0] < min(mv.shape[1], mv.shape[2]):
+    if guessed_order and mv.shape[0] < min(mv.shape[1], mv.shape[2]):
         warnings.warn(f"{path}: first axis ({mv.shape[0]}) smaller than spatial "
                       f"dims {mv.shape[1:]}; expected (T, H, W) — check orientation.")
     return mv

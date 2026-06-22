@@ -9,10 +9,13 @@
 # often purged after a period of inactivity on HPC systems — keep the conda env
 # and trained models there only if used regularly, otherwise point
 # ENV_PREFIX/MODELS_DIR at longer-term/group storage.
-export WORKSPACE="${WORKSPACE:-${SCRATCH:-$HOME}/orcann_workspace}"
+export WORKSPACE="${WORKSPACE:-/exports/eddie/scratch/$USER/calcineps_workspace}"
 
 export CODE_DIR="${CODE_DIR:-${WORKSPACE}/code}"            # the orcann repo
-export ENV_PREFIX="${ENV_PREFIX:-${WORKSPACE}/env/orcann}"  # conda prefix env
+export ENV_PREFIX="${ENV_PREFIX:-${WORKSPACE}/env/calcineps}"  # conda prefix env
+# Motion correction (NoRMCorre) needs caiman, which was removed from the env
+# above; it lives in a separate env. Activate this one only for the MC step.
+export CAIMAN_ENV="${CAIMAN_ENV:-/exports/eddie/scratch/$USER/conda/envs/caiman}"
 
 # Data
 export ANNOTATED_DIR="${ANNOTATED_DIR:-${WORKSPACE}/data/annotated}"   # movies/ + rois/

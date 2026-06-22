@@ -50,7 +50,7 @@ sub-frame spike times — the input physically cannot support finer timing.
 from __future__ import annotations
 
 import math
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
@@ -195,16 +195,6 @@ class TemporalRateModel(nn.Module):
 # DATA PREP — degrade high-rate ground truth to the target regime
 # =============================================================================
 
-def downsample_trace(trace: np.ndarray, factor: int) -> np.ndarray:
-    """Anti-aliased decimation: AVERAGE over non-overlapping bins, not pick.
-
-    Averaging approximates the temporal integration of a true low-frame-rate
-    acquisition; plain subsampling would alias fast structure into the signal.
-    """
-    n = (len(trace) // factor) * factor
-    return trace[:n].reshape(-1, factor).mean(axis=1)
-
-
 def match_noise(trace: np.ndarray, target_sd: float,
                 rng: Optional[np.random.Generator] = None) -> np.ndarray:
     """Add white Gaussian noise so the trace reaches a target noise SD.
@@ -252,24 +242,6 @@ def standardize_trace(trace: np.ndarray, frame_rate: float,
     detrended = trace - f0
     noise = _robust_sd(detrended)
     return (detrended / (noise + 1e-9)).astype(np.float32)
-
-
-def rate_target_from_spikes(spike_times_s: np.ndarray, n_bins: int,
-                            frame_rate: float, smooth_s: float = 1.0
-                            ) -> np.ndarray:
-    """High-rate spike times -> smoothed per-bin event rate at the target rate.
-
-    Bin spikes to the target frame rate, then Gaussian-smooth (σ = smooth_s).
-    This is the supervised target: a rate, never discrete sub-bin spikes.
-    """
-    from scipy.ndimage import gaussian_filter1d
-
-    counts = np.zeros(n_bins, dtype=np.float32)
-    idx = np.floor(np.asarray(spike_times_s) * frame_rate).astype(int)
-    idx = idx[(idx >= 0) & (idx < n_bins)]
-    np.add.at(counts, idx, 1.0)
-    sigma_bins = max(smooth_s * frame_rate, 0.5)
-    return gaussian_filter1d(counts, sigma_bins).astype(np.float32)
 
 
 # =============================================================================
