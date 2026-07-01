@@ -21,8 +21,12 @@ dependencies = [
 
 # torch is installed separately in setup_hpc.sh so the CUDA build can be
 # matched to the cluster's driver/CUDA module rather than pinned here.
+[project.scripts]
+orcann = "orcann.pipeline.cli:main"
+
 [project.optional-dependencies]
 torch = ["torch>=2.1"]
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["orcann*"]

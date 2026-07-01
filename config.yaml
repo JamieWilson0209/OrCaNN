@@ -1,0 +1,86 @@
+# OrCaNN configuration - the single source of truth for a run.
+# Edit values and run, e.g.:  orcann run_pipeline --config config.yaml
+# Paths are relative to THIS file's directory (the workspace root), so the
+# repo works wherever it is extracted; an absolute path is used as-is.
+# null = unset / use the default; lists use [a, b].
+
+# Workspace layout: where recordings live and where results are written
+paths:
+  raw: "data/raw"                      # recordings to process (.nd2 / .tif / .npy)
+  pre_processed: "data/pre_processed"  # motion-corrected movies (motion_correction output, infer input)
+  infer: "results/infer"               # cached probability maps (infer output, segment input)
+  spatial: "results/spatial"           # segment output: <spatial>/<recording_id>/
+  transients: "results/transients"     # detect_transients output: <transients>/<recording_id>/
+  analysis: "results/analysis"         # analysis stage output (group figures + tables)
+
+# Trained models used by the detection stages
+models:
+  spatial: "models/seg_final/segmenter.pt"   # trained segmenter (.pt)
+  temporal: "models/temporal/rate_model.pt"  # trained temporal rate model (.pt)
+
+# Spatial stage (segmentation) knobs - used by segment
+spatial:
+  threshold: 0.5         # soma-probability cut, ~0.5-0.6
+  watershed: false       # split touching cells (false = connected components, which merge them)
+  min_distance: 4        # min peak separation in px for watershed seeding
+  min_area: 4            # drop detected regions smaller than this many px (0 disables)
+  min_radius: 0.0        # or drop regions below this equivalent radius in px
+  resize_to: 0           # force each frame to NxN when pixel size is unknown (0 = off)
+  train_um_per_px: null  # override the model's recorded training pixel size (null = use model's)
+
+# Temporal stage (transient detection) knobs - detect_transients
+temporal:
+  frame_rate: 2.0      # recording frame rate in Hz
+  min_prominence: 0.5  # rate-units prominence a transient must clear (main sensitivity knob)
+  floor_pct: 25.0      # height floor = this percentile of the rate (gates quiet baseline)
+  min_isi_s: 1.0       # minimum separation between transients, in seconds
+
+# Motion correction (caiman env) - motion_correction stage
+motion_correction:
+  mode: "auto"   # rigid | piecewise_rigid | auto
+  max_shift: 20  # maximum shift in px
+
+# QC figures written by the detection stages
+figures:
+  enabled: true       # write QC figures (overlay + per-ROI panels)
+  max_roi_figures: 0  # cap per-ROI panels, keeping the most active (0 = all)
+
+# train_spatial - fit the segmenter
+train_spatial:
+  movies: "data/annotated/movies"              # dir of training movies (<stem>.tif)
+  masks: "data/annotated/masks"                # dir of instance-label masks (<stem>.npy) or ImageJ ROI sets
+  out: "models/seg_final"                      # output dir for the trained segmenter.pt
+  report: "results/spatial_eval/report.json"   # optional JSON metrics path (null to skip)
+  channels: ["structural", "max", "variance"]  # energy channels: any of structural, max, variance, correlation
+  radii: [3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0]  # LoG scale bank, cell radii in px
+  min_cell_area: 0                             # strip ROIs smaller than this from training masks (0 = keep all)
+  pixel_um: null                               # training movies' um/px, recorded in the model (null if unknown)
+  patch: 128                                   # training patch size in px
+  epochs: 30                                   # training epochs
+  val_frac: 0.2                                # fraction of recordings held out for validation
+  holdout: true                                # hold out val_frac to evaluate; false = train final model on all data
+
+# train_temporal - fit/evaluate the temporal head
+train_temporal:
+  gt_dir: "data/public_gt"                            # dir of CASCADE ground-truth .mat files
+  indicator_map: "data/public_gt/indicator_map.json"  # JSON mapping each .mat filename to an indicator label
+  report: "results/loio/report.json"                  # JSON path for the LOIO validation table (null to skip validation)
+  save_final: "models/temporal/rate_model.pt"         # path to save the model fit on all data, loaded by detect_transients (null to skip)
+  target_fs: 2.0                                      # resample public ground truth to this rate, Hz
+  epochs: 25                                          # training epochs
+  scale_dropout: 0.0                                  # fraction of wavelet-scale channels dropped in training (0 = off)
+  exclude: []                                         # drop indicator groups whose label contains any of these substrings
+
+# scripts/visualize_transients.py - per-ROI inspection figure
+viz:
+  traces: null                            # (n_roi, T) fluorescence traces (.npy)
+  model: "models/temporal/rate_model.pt"  # trained temporal model (.pt)
+  out: "transients.png"                   # output figure path (.png)
+
+#
+analysis:
+  day_regex: "D([0-9]+)"            # recording_id regex; capture group 1 -> developmental day (int)
+  line_regex: "D[0-9]+[_-]([^_]+)"  # recording_id regex; capture group 1 -> line/clone token
+  control_prefix: "3"               # line tokens starting with this are Control, else Mutant
+  rois: "auto"
+  max_rois: 6
