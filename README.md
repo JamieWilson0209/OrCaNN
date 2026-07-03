@@ -236,3 +236,13 @@ python scripts/visualize_transients.py --config config.yaml
 
 ---
 
+## Status and caveats
+
+- **Temporal stage**: validated cross-indicator on CASCADE (LOIO). Transfers
+  well to mainstream GECIs/dyes and GCaMP8; weak on SST/VIP interneurons.
+- **Spatial stage**: implemented and self-tested on synthetic data; awaiting
+  annotated recordings to train. ImageJ `RoiSet.zip` intake is wired.
+- **Standing caveat**: the temporal model is trained on in-vivo 2-photon data,
+  so the absolute rate scale on Fluo-4 organoid recordings is uncalibrated.
+  Prefer continuous rate measures over absolute event counts for cross-domain
+  analysis.
