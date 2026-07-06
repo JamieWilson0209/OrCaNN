@@ -1,0 +1,10 @@
+motion-corrected movies
+
+  <recording_id>_mc.tif        (+ <recording_id>_mc_shifts.npy sidecar)
+
+You may also drop pre-corrected movies here and start the pipeline at infer.
+Written by: motion_correction.   Read by: infer.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

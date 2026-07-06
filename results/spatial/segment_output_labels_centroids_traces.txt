@@ -1,0 +1,11 @@
+segment output: labels, centroids, per-ROI traces
+
+One folder per recording, results/spatial/<recording_id>/:
+  data/     labels.npy  centroids.npy  traces.npy  max_projection.npy  meta.json
+  figures/  overlay.png
+
+Written by: segment.   Read by: activity.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

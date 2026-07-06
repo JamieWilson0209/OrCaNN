@@ -1,0 +1,9 @@
+trained segmenter
+
+  segmenter.pt
+
+Written by: train_spatial.   Read by: infer / segment (models.spatial in config.yaml).
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

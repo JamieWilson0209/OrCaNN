@@ -5,7 +5,7 @@
 #
 #   bash hpc/submit.sh <stage> [config.yaml]
 #
-# stages:  motion_correct | infer | segment | detect_transients
+# stages:  motion_correct | infer | segment | activity
 #
 # It counts the recordings the stage will process — using OrCaNN's own listing,
 # so the task indices line up exactly with what the worker picks per task — and
@@ -13,7 +13,7 @@
 #
 # A single recording is just N=1 (a one-task array); nothing special is needed.
 # Run the stages in order (each indexes the previous stage's outputs):
-#   motion_correct -> infer -> segment -> detect_transients
+#   motion_correct -> infer -> segment -> activity
 # To preview a parameter grid before extracting, qsub segment.sh with a SWEEP
 # variable directly (see hpc/jobs/segment.sh); submit.sh runs the real extract.
 #
@@ -28,12 +28,12 @@ REPO_ROOT="$(cd "${HERE}/.." && pwd)"
 cd "${REPO_ROOT}"                 # -cwd jobs run from here; the count is repo-relative
 source "${HERE}/config.sh"
 
-STAGE="${1:?usage: bash hpc/submit.sh <stage> [config.yaml]   stage: motion_correct|infer|segment|detect_transients}"
+STAGE="${1:?usage: bash hpc/submit.sh <stage> [config.yaml]   stage: motion_correct|infer|segment|activity}"
 CONFIG="${2:-config.yaml}"
 
 case "${STAGE}" in
-    motion_correct|infer|segment|detect_transients) ;;
-    *) echo "unknown stage '${STAGE}'. Use: motion_correct | infer | segment | detect_transients" >&2
+    motion_correct|infer|segment|activity) ;;
+    *) echo "unknown stage '${STAGE}'. Use: motion_correct | infer | segment | activity" >&2
        echo "(run_pipeline and train_* are not per-recording arrays; qsub them directly.)" >&2
        exit 2 ;;
 esac
@@ -58,7 +58,7 @@ elif stage == "infer":
     n = len(list_recordings(cfg.paths.pre_processed))
 elif stage == "segment":
     n = len(list_infer_recordings(cfg.paths.infer))
-else:  # detect_transients
+else:  # activity
     n = len(list_spatial_recordings(cfg.paths.spatial))
 print(n)
 PY

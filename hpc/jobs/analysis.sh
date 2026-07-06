@@ -2,11 +2,10 @@
 # =============================================================================
 # Group analysis over the transient outputs: within-recording frequency and
 # timescale distributions, genotype comparison, and longitudinal-by-day trends.
-# A single aggregate job (not a per-recording array); reads results/transients
-# and writes results/analysis. CPU work. Submit AFTER detect_transients has run
+# A single aggregate job (not a per-recording array); reads results/activity
+# and writes results/analysis. CPU work. Submit AFTER activity has run
 # for every recording:
 #   qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh
-#   qsub -v CONFIG=config.yaml,SET="analysis.control_prefix=3" hpc/jobs/analysis.sh
 # =============================================================================
 #$ -N orcann_analysis
 #$ -cwd

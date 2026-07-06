@@ -1,0 +1,13 @@
+activity output: dF/F0, spikes, footprints, gallery
+
+One folder per recording, results/activity/<recording_id>/:
+  data/   temporal_traces.npy  temporal_traces_raw.npy  traces_denoised.npy
+          spike_trains.npy  deconv_noise.npy  spatial_footprints.npz
+          max_projection.npy  mean_projection.npy
+  run_info.json   gallery.html
+
+Written by: activity.   Read by: analysis.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

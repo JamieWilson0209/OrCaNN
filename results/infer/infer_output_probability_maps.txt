@@ -1,0 +1,10 @@
+infer output: cached probability maps
+
+One folder per recording, results/infer/<recording_id>/:
+  prob.npy   max_projection.npy   meta.json   prob_overlay.png
+
+Written by: infer (GPU).   Read by: segment.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

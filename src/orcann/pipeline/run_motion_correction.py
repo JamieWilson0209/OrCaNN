@@ -44,6 +44,11 @@ def run(cfg, task_id=None, force=False):
         s = res.summary()
         with open(os.path.join(pre, stem + "_mc.json"), "w") as fh:
             json.dump(s, fh, indent=2)
+        # Per-frame [dy, dx] shifts, so the activity stage can carry them into
+        # results/activity/ for the analysis stage's residual-motion QC metric.
+        if getattr(res, "shifts", None) is not None:
+            np.save(os.path.join(pre, stem + "_mc_shifts.npy"),
+                    np.asarray(res.shifts, np.float32))
         T, H, W = res.corrected.shape
         mx = f"{s['max_shift_y']:.1f},{s['max_shift_x']:.1f}"
         print(f"{stem:24s} {f'{T},{H},{W}':>16} {mx:>13} {s['elapsed_seconds']:6.0f}")

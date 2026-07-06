@@ -1,7 +1,9 @@
 # Running OrCaNN on an HPC cluster (SGE / Grid Engine)
 
-Written for an SGE / Grid Engine cluster with GPU nodes. The spatial stage trains
-on GPU; the temporal stage is small enough for CPU.
+Written for an SGE / Grid Engine cluster with GPU nodes. The spatial segmenter
+trains and infers on GPU; segmentation, the activity stage (dF/F0 + OASIS +
+gallery), and group analysis are CPU work. Motion correction and the activity
+stage run in the caiman env; every other stage runs in the torch env.
 
 The repo **is** the workspace: it ships the `data/ models/ results/ logs/` tree
 (empty), and `config.yaml` resolves its paths relative to its own location, so
@@ -49,7 +51,6 @@ data/raw/                 raw recordings (motion_correction input)
 data/pre_processed/       motion-corrected movies (infer input)
 data/annotated/movies/    annotated recordings for segmenter training
 data/annotated/masks/     matching instance masks (.npy) or ImageJ ROI sets (same stem)
-data/public_gt/           CASCADE ground-truth .mat + indicator_map.json
 ```
 
 ## 3. Submit jobs (from the repo root)
@@ -61,21 +62,28 @@ recording is just a one-task array — nothing special needed):
 ```bash
 # per-recording arrays — run in order, waiting for each to finish before the next
 bash hpc/submit.sh motion_correct   config.yaml   # caiman env: data/raw -> data/pre_processed
-bash hpc/submit.sh infer            config.yaml   # GPU: data/pre_processed -> results/infer (cache prob maps)
-bash hpc/submit.sh segment          config.yaml   # CPU: results/infer + movie -> results/spatial
-bash hpc/submit.sh detect_transients config.yaml  # CPU: results/spatial -> results/transients
+bash hpc/submit.sh infer            config.yaml   # torch env, GPU: data/pre_processed -> results/infer (cache prob maps)
+bash hpc/submit.sh segment          config.yaml   # torch env, CPU: results/infer + movie -> results/spatial
+bash hpc/submit.sh activity         config.yaml   # caiman env, CPU: results/spatial -> results/activity (dF/F0, OASIS, gallery)
+
+# group analysis (not per-recording; submit directly, after activity)
+source hpc/config.sh
+qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh    # torch env, CPU: results/activity -> results/analysis
 
 # training (not per-recording; submit directly)
-source hpc/config.sh
 qsub hpc/jobs/train_spatial.sh                     # GPU; spatial segmenter
-qsub hpc/jobs/train_temporal.sh                    # CPU; cross-indicator table (LOIO)
 
 # single recording / quick end-to-end in one job (not an array)
 qsub -v CONFIG=config.yaml hpc/jobs/run_pipeline.sh
 ```
 
+`activity` runs in the **caiman env** (OASIS is CaImAn's `constrained_foopsi`),
+the same env as motion correction; every other stage runs in the torch env. If
+`activity` ever runs without caiman on the path, deconvolution falls back to the
+dependency-free `threshold` method with a warning rather than failing.
+
 **Order matters between arrays.** Each stage indexes the previous stage's outputs,
-so run them in order (`motion_correct -> infer -> segment -> detect_transients`),
+so run them in order (`motion_correct -> infer -> segment -> activity`),
 waiting for each array to finish before submitting the next — otherwise some tasks
 would index a dir still being written. The arrays are separate submissions for
 exactly this reason; `run_pipeline` chains them in one serial job instead (which
@@ -110,10 +118,10 @@ centroid is inside). Re-run `segment --force` for that recording to apply.
 so a partially-failed array can be resubmitted and only the missing recordings
 are redone. Tuning lives in `config.yaml` — edit it rather than passing per-job
 overrides. `infer` requests GPU (`-q gpu -l gpu=1`) for the segmenter and
-auto-detects the device; `segment` and `detect_transients` are CPU-only. All paths,
-models, and tuning come from `config.yaml` (the `paths`, `models`, `spatial`, and
-`temporal` sections; see the commented file from `orcann run_pipeline
---dump-config`).
+auto-detects the device; `segment`, `activity`, and `analysis` are CPU-only. All
+paths, the model, and tuning come from `config.yaml` (the `paths`, `models`,
+`spatial`, `imaging`, `baseline`, `deconvolution`, and `analysis` sections; see
+the commented file from `orcann run_pipeline --dump-config`).
 
 If your job needs an L40S instead of an A100, change `-l a100=true` to
 `-l l40s=true`; for a fast-scheduling test slice use `-l gpu-mig=1` (a 20 GB MIG
@@ -143,21 +151,22 @@ orcann train_spatial --synthetic --set train_spatial.epochs=1
 
 ```
 models/seg_final/segmenter.pt       trained spatial segmenter
-models/temporal/rate_model.pt       trained temporal rate head
 results/spatial_eval/report.json    held-out IoU (train_spatial report)
-results/loio/report.json            leave-one-indicator-out transfer table
 results/spatial/<rec>/              per recording: labels, centroids, traces,
                                     max_projection, overlay.png
-results/transients/<rec>/           per recording: traces, rates, events,
-                                    roi_<i>.png
+results/activity/<rec>/             per recording (calcium-format): temporal_traces,
+                                    temporal_traces_raw, traces_denoised, spike_trains,
+                                    spatial_footprints.npz, max/mean_projection,
+                                    run_info.json, gallery.html
+results/analysis/                   group figures + tables (genotype + longitudinal)
 ```
 
 ## Still to confirm at data intake
 
 - **ROI format & pairing** — label image / centroids / ImageJ ROI set; row-col
-  vs x-y; and that `movies/<stem>` ↔ `rois/<stem>`. Wire `load_recording` to match.
-- **Pixel size (µm/px)** — to seed `--radii` from real cell diameters.
-- **indicator_map.json** — `{"file.mat": "GCaMP6f_exc", ...}`, grouped by
-  indicator *and* cell class.
+  vs x-y; and that `movies/<stem>` ↔ `masks/<stem>`. Wire `load_recording` to match.
+- **Pixel size (µm/px)** — to seed the training `radii` from real cell diameters.
+- **Indicator & frame rate** — set `imaging.indicator` / `imaging.frame_rate` so
+  the OASIS decay time and dF/F0 windows are right for the recording.
 - **Max-projection substrate** — which summary image the annotators drew on
   (raw max / smoothed max / percentile), so the structural channel can match it.

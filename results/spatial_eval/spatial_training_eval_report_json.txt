@@ -1,0 +1,10 @@
+spatial training evaluation
+
+Held-out segmenter metrics land here:
+  report.json        (path set by train_spatial.report in config.yaml)
+
+Written by: train_spatial.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

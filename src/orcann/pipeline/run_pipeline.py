@@ -1,13 +1,15 @@
-"""Full pipeline: motion correction (if needed) -> infer -> segment -> detect_transients.
+"""Full pipeline: motion correction (if needed) -> infer -> segment -> activity.
 
 Reads everything from the config. Motion correction is skipped when every raw
 recording already has a corrected movie in data/pre_processed. `infer` runs the
 GPU model and caches the probability maps; `segment` thresholds + extracts (CPU,
-no model). Each stage skips recordings whose output exists; pass force=True to redo.
+no model); `activity` baseline-corrects, deconvolves (OASIS) and renders the
+gallery. Each stage skips recordings whose output exists; pass force=True to redo.
+Group `analysis` is a separate aggregate step, run after this completes.
 """
 import os
 
-from orcann.pipeline import run_infer, run_segment, detect_transients, run_motion_correction
+from orcann.pipeline import run_infer, run_segment, run_activity, run_motion_correction
 from orcann.pipeline.cli import list_recordings
 
 
@@ -32,5 +34,5 @@ def run(cfg, task_id=None, force=False):
         print(f"motion_correction: {cfg.paths.pre_processed} already complete, skipping")
     run_infer.run(cfg, task_id=task_id, force=force)
     run_segment.run(cfg, task_id=task_id, force=force)
-    detect_transients.run(cfg, task_id=task_id, force=force)
-    print("=== pipeline complete ===")
+    run_activity.run(cfg, task_id=task_id, force=force)
+    print("=== pipeline complete (now run: orcann analysis) ===")

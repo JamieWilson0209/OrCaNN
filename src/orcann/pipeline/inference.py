@@ -17,8 +17,6 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from orcann.temporal.detector import detect_transients
-
 
 # CANONICAL FILENAMES — the single source of truth for the contract.
 # Every read or write of a per-recording artifact goes through these names;
@@ -144,48 +142,6 @@ def traces_from_labels(movie: np.ndarray, labels: np.ndarray,
     return traces, cents
 
 
-# TEMPORAL — traces -> rates + events  (shared with run_transients.py)
-
-def load_traces(path: str) -> np.ndarray:
-    """Load a trace file and orient it as (n_roi, T) float32."""
-    a = np.load(path)
-    if a.ndim == 1:
-        a = a[None]
-    if a.shape[0] > a.shape[1]:                        # orient as (n_roi, T)
-        a = a.T
-    return a.astype(np.float32)
-
-
-def detect_all(model, traces: np.ndarray, frame_rate: float,
-               min_prominence: float = 0.5, floor_pct: float = 25.0,
-               min_isi_s: float = 1.0) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
-    """Run ``detect_transients`` over every ROI trace.
-
-    The one detection loop both runners share. Returns ``(rates (N,T), events)``
-    where ``events`` is the long-format dict ready for ``np.savez_compressed``:
-    ``roi (int32), time_s, duration_s, amplitude (float32)``, one row per
-    detected transient, indexing into the ROI axis of ``rates``/``traces``.
-    """
-    n_roi, T = traces.shape
-    rates = np.zeros((n_roi, T), np.float32)
-    ev_roi, ev_t, ev_d, ev_a = [], [], [], []
-    for i in range(n_roi):
-        det = detect_transients(model, traces[i], frame_rate,
-                                min_prominence=min_prominence,
-                                floor_pct=floor_pct, min_isi_s=min_isi_s)
-        rates[i] = det["rate"]
-        k = len(det["peaks"])
-        if k:
-            ev_roi.append(np.full(k, i, np.int32))
-            ev_t.append(det["times_s"])
-            ev_d.append(det["durations_s"])
-            ev_a.append(det["amplitudes"])
-    cat = lambda L, dt: (np.concatenate(L).astype(dt) if L else np.array([], dt))
-    events = {"roi": cat(ev_roi, np.int32), "time_s": cat(ev_t, np.float32),
-              "duration_s": cat(ev_d, np.float32), "amplitude": cat(ev_a, np.float32)}
-    return rates, events
-
-
 # WRITE — the canonical per-recording folder (single writer, both runners)
 
 def write_recording(out_root: str, rec_id: str, *,
@@ -254,31 +210,20 @@ def write_figures(out: str, model, traces: np.ndarray, rates: np.ndarray,
                   labels: Optional[np.ndarray] = None,
                   centroids: Optional[np.ndarray] = None,
                   max_roi_figures: int = 0) -> int:
-    """Render the QC figures into ``<out>/figures/``; return the ROI panel count.
+    """Render the spatial QC overlay into ``<out>/figures/overlay.png``.
 
-    Writes the spatial overlay when a max projection is available, then one
-    temporal panel per ROI (capped to the most active ``max_roi_figures`` if
-    set). ``detection`` is forwarded to the panel renderer so the figures match
-    the events written to disk.
+    The segment stage writes only the instance overlay (outlines + numbered
+    centroids); the interactive per-ROI trace view is the activity stage's HTML
+    gallery, so this no longer renders per-ROI temporal panels. The unused
+    ``model``/``rates``/``detection`` parameters are kept for call-site
+    compatibility with the shared writer signature.
     """
-    from orcann.pipeline.figures import roi_figure
     fig_dir = os.path.join(out, FIGURES_DIRNAME)
     os.makedirs(fig_dir, exist_ok=True)
-
     if max_projection is not None and labels is not None:
         write_overlay(os.path.join(fig_dir, OVERLAY_PNG),
                       max_projection, labels, centroids)
-
-    if rates is None or model is None:        # spatial-only: overlay, no panels
-        return 0
-    n_roi = traces.shape[0]
-    order = list(range(n_roi))
-    if max_roi_figures and n_roi > max_roi_figures:
-        order = list(np.argsort(rates.sum(axis=1))[::-1][:max_roi_figures])
-    for i in order:
-        roi_figure(os.path.join(fig_dir, ROI_FIG_FMT.format(i)), model,
-                   traces[i], frame_rate, roi_label=f"ROI {i}", **detection)
-    return len(order)
+    return 0
 
 
 def write_overlay(path: str, max_proj: np.ndarray, labels: np.ndarray,

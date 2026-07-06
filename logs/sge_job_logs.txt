@@ -1,0 +1,7 @@
+job logs
+
+SGE / Grid Engine stdout and stderr land here. Nothing is committed; safe to clear.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

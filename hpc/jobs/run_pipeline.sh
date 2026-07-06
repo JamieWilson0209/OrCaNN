@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Full pipeline in ONE job (all recordings, serial): motion correction (if
-# needed) -> infer -> segment -> detect_transients. Runs in the TORCH env, so
+# needed) -> infer -> segment -> activity. Runs in the TORCH env, so
 # motion correction must already be done (data/pre_processed populated);
 # run_pipeline detects this and skips the caiman step. If pre_processed is empty
 # it will try to import caiman and fail — motion-correct first.
@@ -11,7 +11,7 @@
 #   bash hpc/submit.sh motion_correct  config.yaml   # then wait for it to finish
 #   bash hpc/submit.sh infer           config.yaml   # then wait for it to finish
 #   bash hpc/submit.sh segment         config.yaml   # then wait for it to finish
-#   bash hpc/submit.sh detect_transients config.yaml
+#   bash hpc/submit.sh activity config.yaml
 # (run_pipeline is not itself arrayed: it chains three differently-indexed stages
 # with one task id, and the transients step re-indexes the spatial outputs the
 # array would still be writing — racy. The separate arrays avoid that.)

@@ -1,0 +1,11 @@
+training masks (to train the spatial segmenter)
+
+Pairs with the same-stem movie in ../movies/:
+  <stem>.npy     integer instance-label image
+  <stem>.zip     ImageJ RoiSet.zip
+
+Read by: train_spatial.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

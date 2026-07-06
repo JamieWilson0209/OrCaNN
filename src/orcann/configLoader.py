@@ -1,6 +1,6 @@
 """Single source of truth for the pipeline: one YAML file drives every run.
 
-The workspace layout (paths) and the trained models live here alongside every
+The workspace layout (paths) and the trained model live here alongside every
 tuning knob, so each subcommand reads its section instead of taking flags. Edit a
 YAML file and pass ``--config``; generate a fully-commented starting file with
 ``orcann <stage> --dump-config config.yaml``. ``--set section.key=value`` is a
@@ -28,24 +28,30 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Any, Optional, Tuple
 
 
-# --- workspace layout + trained models ---------------------------------------
+# --- workspace layout + trained model ----------------------------------------
 @dataclass
 class Paths:
     raw: str = "data/raw"
     pre_processed: str = "data/pre_processed"
     infer: str = "results/infer"         # cached probability maps (infer stage output)
-    spatial: str = "results/spatial"
-    transients: str = "results/transients"
+    spatial: str = "results/spatial"     # segment output: <spatial>/<recording_id>/
+    activity: str = "results/activity"   # activity output: <activity>/<recording_id>/ (calcium-format)
     analysis: str = "results/analysis"   # analysis stage output (group figures + tables)
 
 
 @dataclass
 class Models:
     spatial: Optional[str] = "models/seg_final/segmenter.pt"
-    temporal: Optional[str] = "models/temporal/rate_model.pt"
 
 
-# --- detection stages ---------------------------------------------------------
+# --- recording-wide imaging metadata -----------------------------------------
+@dataclass
+class Imaging:
+    frame_rate: float = 2.0
+    indicator: str = "fluo4"          # resolves a decay time when deconvolution.decay_time is null
+
+
+# --- spatial detection stage --------------------------------------------------
 @dataclass
 class SpatialParams:
     threshold: float = 0.5
@@ -57,31 +63,53 @@ class SpatialParams:
     train_um_per_px: Optional[float] = None
 
 
+# --- activity stage: baseline + deconvolution (calcium bridge) ---------------
 @dataclass
-class TemporalParams:
-    frame_rate: float = 2.0
-    min_prominence: float = 0.5
-    floor_pct: float = 25.0
-    min_isi_s: float = 1.0
+class BaselineParams:
+    method: str = "global_dff"        # direct | global_dff | local_background
+    percentile: float = 8.0
+    window_fraction: float = 0.25
+    min_window: int = 50
+    max_window: int = 500
+    presmooth_sigma: float = 0.0      # Gaussian smoothing (frames) for F0 estimation only; 0 = off
 
-    def detection(self) -> dict:
-        return {"min_prominence": self.min_prominence,
-                "floor_pct": self.floor_pct, "min_isi_s": self.min_isi_s}
+
+@dataclass
+class DeconvolutionParams:
+    enabled: bool = True
+    method: str = "oasis"             # oasis | threshold | robust
+    decay_time: Optional[float] = None  # seconds; null resolves from imaging.indicator
+    optimize_g: bool = True
+    penalty: float = 0.0              # L1 sparsity; 0 = auto-tune (recommended for OASIS)
+    noise_method: str = "mean"        # mean | median | logmexp
+    s_min: float = 0.1                # min spike amplitude in dF/F0 (OASIS suppresses below this)
+    noise_gate_sigma: float = 3.5     # keep only spikes above this multiple of the trace noise floor
+    robust_safety_net: bool = True    # on the oasis path, backfill obvious transients OASIS missed
+    robust_k_onset: float = 3.0       # robust detector: event onset threshold (x noise)
+    robust_k_peak: float = 5.0        # robust detector: required peak height (x noise)
+    robust_min_duration_s: float = 0.5  # robust detector: minimum event duration (seconds)
 
 
 @dataclass
 class MotionCorrectionParams:
-    mode: str = "auto"
+    mode: str = "auto"                # rigid | piecewise_rigid | auto
     max_shift: int = 20
 
 
 @dataclass
 class FigureParams:
-    enabled: bool = True
-    max_roi_figures: int = 0
+    enabled: bool = True              # write the spatial QC overlay in segment
 
 
-# --- training -----------------------------------------------------------------
+@dataclass
+class GalleryParams:
+    interactive: bool = True          # per-recording interactive HTML gallery
+    movie: bool = False               # full-movie HTML viewer (large; off by default)
+    movie_subsample: int = 1          # keep every Nth frame in the movie gallery
+    max_rois: int = 500               # cap ROIs drawn in the gallery
+
+
+# --- training (spatial only) --------------------------------------------------
 @dataclass
 class TrainSpatialParams:
     movies: Optional[str] = "data/annotated/movies"
@@ -98,47 +126,30 @@ class TrainSpatialParams:
     holdout: bool = True
 
 
-@dataclass
-class TrainTemporalParams:
-    gt_dir: Optional[str] = "data/public_gt"
-    indicator_map: Optional[str] = "data/public_gt/indicator_map.json"
-    report: Optional[str] = "results/loio/report.json"
-    save_final: Optional[str] = "models/temporal/rate_model.pt"
-    target_fs: float = 2.0
-    epochs: int = 25
-    scale_dropout: float = 0.0
-    exclude: Tuple[str, ...] = ()
-
-
-# --- trace inspection figure (scripts/visualize_transients.py) ----------------
-@dataclass
-class VizParams:
-    traces: Optional[str] = None
-    model: Optional[str] = "models/temporal/rate_model.pt"
-    out: str = "transients.png"
-
-
+# --- group analysis (calcium) -------------------------------------------------
 @dataclass
 class AnalysisParams:
-    # recording_id -> metadata parsing (checked via recording_metrics.csv)
-    day_regex: str = "D([0-9]+)"              # capture group 1 -> developmental day (int)
-    line_regex: str = "D[0-9]+[_-]([^_]+)"    # capture group 1 -> line/clone token
-    control_prefix: str = "3"                 # line tokens starting with this are Control, else Mutant
-    rois: str = "auto"
-    max_rois: int = 6
+    mutant_label: str = "CEP41 R242H"     # legend label for the non-control genotype
+    min_roi_distance: float = 15.0        # dedupe ROIs whose centroids are closer than this (px)
+    motion_max_threshold: float = 15.0    # QC: max motion shift (px) tolerated per recording
+    motion_residual_threshold: float = 2.0  # QC: residual motion (px) tolerated per recording
+    drift_threshold: float = 1.0          # QC: baseline drift tolerated per recording
+    roi_peak_figures: bool = False        # also render per-ROI peak montages (slow)
+    inactive_file: Optional[str] = None   # text file of recording ids to mark inactive (one per line)
 
 
 @dataclass
 class Config:
     paths: Paths = field(default_factory=Paths)
     models: Models = field(default_factory=Models)
+    imaging: Imaging = field(default_factory=Imaging)
     spatial: SpatialParams = field(default_factory=SpatialParams)
-    temporal: TemporalParams = field(default_factory=TemporalParams)
+    baseline: BaselineParams = field(default_factory=BaselineParams)
+    deconvolution: DeconvolutionParams = field(default_factory=DeconvolutionParams)
     motion_correction: MotionCorrectionParams = field(default_factory=MotionCorrectionParams)
     figures: FigureParams = field(default_factory=FigureParams)
+    gallery: GalleryParams = field(default_factory=GalleryParams)
     train_spatial: TrainSpatialParams = field(default_factory=TrainSpatialParams)
-    train_temporal: TrainTemporalParams = field(default_factory=TrainTemporalParams)
-    viz: VizParams = field(default_factory=VizParams)
     analysis: AnalysisParams = field(default_factory=AnalysisParams)
 
     # Workspace root: the directory of the config file, set by load(). Not a
@@ -148,12 +159,25 @@ class Config:
 
     # Path-valued fields, resolved against root by resolve_paths().
     _PATH_FIELDS = {
-        "paths": ("raw", "pre_processed", "infer", "spatial", "transients", "analysis"),
-        "models": ("spatial", "temporal"),
+        "paths": ("raw", "pre_processed", "infer", "spatial", "activity", "analysis"),
+        "models": ("spatial",),
         "train_spatial": ("movies", "masks", "out", "report"),
-        "train_temporal": ("gt_dir", "indicator_map", "report", "save_final"),
-        "viz": ("traces", "model", "out"),
+        "analysis": ("inactive_file",),
     }
+
+    # ---- indicator -> decay time (s), used when deconvolution.decay_time is null
+    INDICATOR_DECAY = {
+        "gcamp6f": 0.4, "gcamp6s": 2.0, "jgcamp7f": 0.5, "jgcamp8f": 0.3,
+        "jgcamp8m": 0.5, "jgcamp8s": 1.0, "fluo4": 0.4, "fluo-4": 0.4,
+        "ogb1": 0.7, "ogb-1": 0.7, "jrgeco1a": 0.7,
+    }
+
+    def decay_time(self) -> float:
+        """Resolved indicator decay time in seconds (explicit override wins)."""
+        if self.deconvolution.decay_time is not None:
+            return float(self.deconvolution.decay_time)
+        key = str(self.imaging.indicator).strip().lower()
+        return float(self.INDICATOR_DECAY.get(key, 0.4))
 
     @classmethod
     def load(cls, path: Optional[str]) -> "Config":
@@ -305,14 +329,16 @@ def _fmt(v: Any) -> str:
 
 _SECTION_DOC = {
     "paths": "Workspace layout: where recordings live and where results are written",
-    "models": "Trained models used by the detection stages",
-    "spatial": "Spatial stage (segmentation) knobs - used by segment",
-    "temporal": "Temporal stage (transient detection) knobs - detect_transients",
+    "models": "Trained segmenter used by the spatial detection stages",
+    "imaging": "Recording-wide imaging metadata",
+    "spatial": "Spatial detection (segmentation) knobs - used by segment",
+    "baseline": "Baseline correction (dF/F0) - first half of the activity stage",
+    "deconvolution": "Spike deconvolution (OASIS) - second half of the activity stage",
     "motion_correction": "Motion correction (caiman env) - motion_correction stage",
-    "figures": "QC figures written by the detection stages",
+    "figures": "Spatial QC figure written by segment",
+    "gallery": "Per-recording HTML galleries written by the activity stage",
     "train_spatial": "train_spatial - fit the segmenter",
-    "train_temporal": "train_temporal - fit/evaluate the temporal head",
-    "viz": "scripts/visualize_transients.py - per-ROI inspection figure",
+    "analysis": "Group analysis - cross-recording statistics + genotype/day figures",
 }
 
 _FIELD_DOC = {
@@ -320,10 +346,11 @@ _FIELD_DOC = {
     "paths.pre_processed": "motion-corrected movies (motion_correction output, infer input)",
     "paths.infer": "cached probability maps (infer output, segment input)",
     "paths.spatial": "segment output: <spatial>/<recording_id>/",
-    "paths.transients": "detect_transients output: <transients>/<recording_id>/",
+    "paths.activity": "activity output: <activity>/<recording_id>/ (calcium-format, analysis input)",
     "paths.analysis": "analysis stage output (group figures + tables)",
     "models.spatial": "trained segmenter (.pt)",
-    "models.temporal": "trained temporal rate model (.pt)",
+    "imaging.frame_rate": "recording frame rate in Hz",
+    "imaging.indicator": "calcium indicator; resolves a decay time when deconvolution.decay_time is null",
     "spatial.threshold": "soma-probability cut, ~0.5-0.6",
     "spatial.watershed": "split touching cells (false = connected components, which merge them)",
     "spatial.min_distance": "min peak separation in px for watershed seeding",
@@ -331,14 +358,31 @@ _FIELD_DOC = {
     "spatial.min_radius": "or drop regions below this equivalent radius in px",
     "spatial.resize_to": "force each frame to NxN when pixel size is unknown (0 = off)",
     "spatial.train_um_per_px": "override the model's recorded training pixel size (null = use model's)",
-    "temporal.frame_rate": "recording frame rate in Hz",
-    "temporal.min_prominence": "rate-units prominence a transient must clear (main sensitivity knob)",
-    "temporal.floor_pct": "height floor = this percentile of the rate (gates quiet baseline)",
-    "temporal.min_isi_s": "minimum separation between transients, in seconds",
+    "baseline.method": "direct | global_dff (per-trace rolling percentile) | local_background (tissue-masked)",
+    "baseline.percentile": "baseline percentile for global_dff",
+    "baseline.window_fraction": "rolling-baseline window as a fraction of trace length",
+    "baseline.min_window": "minimum rolling-baseline window (frames)",
+    "baseline.max_window": "maximum rolling-baseline window (frames)",
+    "baseline.presmooth_sigma": "Gaussian smoothing (frames) for F0 estimation only; lifts F0 to the true resting level on noisy traces; 0 = off",
+    "deconvolution.enabled": "run OASIS spike inference (false = skip; analysis then has no spikes)",
+    "deconvolution.decay_time": "indicator decay time in s (null = resolve from imaging.indicator)",
+    "deconvolution.optimize_g": "let OASIS fit the AR coefficient from data",
+    "deconvolution.penalty": "L1 sparsity penalty; 0 = auto-tune (recommended for OASIS)",
+    "deconvolution.noise_method": "OASIS noise estimator: mean | median | logmexp",
+    "deconvolution.s_min": "min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)",
+    "deconvolution.noise_gate_sigma": "keep only spikes exceeding this multiple of the trace noise floor (0 = no gate)",
+    "deconvolution.method": "oasis (AR deconvolution) | threshold (peak detection) | robust (deterministic transient detector)",
+    "deconvolution.robust_safety_net": "on the oasis path, backfill clear transients OASIS missed (true recommended)",
+    "deconvolution.robust_k_onset": "robust detector: event onset threshold as a multiple of noise",
+    "deconvolution.robust_k_peak": "robust detector: required peak height as a multiple of noise (main precision knob)",
+    "deconvolution.robust_min_duration_s": "robust detector: minimum event duration in seconds (rejects single-sample noise)",
     "motion_correction.mode": "rigid | piecewise_rigid | auto",
     "motion_correction.max_shift": "maximum shift in px",
-    "figures.enabled": "write QC figures (overlay + per-ROI panels)",
-    "figures.max_roi_figures": "cap per-ROI panels, keeping the most active (0 = all)",
+    "figures.enabled": "write the spatial QC overlay in segment",
+    "gallery.interactive": "per-recording interactive HTML gallery (gallery.html)",
+    "gallery.movie": "full-movie HTML viewer (large file; off by default)",
+    "gallery.movie_subsample": "keep every Nth frame in the movie gallery",
+    "gallery.max_rois": "cap the number of ROIs drawn in the gallery",
     "train_spatial.movies": "dir of training movies (<stem>.tif)",
     "train_spatial.masks": "dir of instance-label masks (<stem>.npy) or ImageJ ROI sets",
     "train_spatial.out": "output dir for the trained segmenter.pt",
@@ -351,20 +395,11 @@ _FIELD_DOC = {
     "train_spatial.epochs": "training epochs",
     "train_spatial.val_frac": "fraction of recordings held out for validation",
     "train_spatial.holdout": "hold out val_frac to evaluate; false = train final model on all data",
-    "train_temporal.gt_dir": "dir of CASCADE ground-truth .mat files",
-    "train_temporal.indicator_map": "JSON mapping each .mat filename to an indicator label",
-    "train_temporal.report": "JSON path for the LOIO validation table (null to skip validation)",
-    "train_temporal.save_final": "path to save the model fit on all data, loaded by detect_transients (null to skip)",
-    "train_temporal.target_fs": "resample public ground truth to this rate, Hz",
-    "train_temporal.epochs": "training epochs",
-    "train_temporal.scale_dropout": "fraction of wavelet-scale channels dropped in training (0 = off)",
-    "train_temporal.exclude": "drop indicator groups whose label contains any of these substrings",
-    "viz.traces": "(n_roi, T) fluorescence traces (.npy)",
-    "viz.model": "trained temporal model (.pt)",
-    "viz.out": "output figure path (.png)",
-    "viz.rois": "comma-separated ROI indices, or 'auto' for the most active",
-    "viz.max_rois": "max number of ROIs to draw",
-    "analysis.day_regex": "recording_id regex; capture group 1 -> developmental day (int)",
-    "analysis.line_regex": "recording_id regex; capture group 1 -> line/clone token",
-    "analysis.control_prefix": "line tokens starting with this are Control, else Mutant",
+    "analysis.mutant_label": "legend label for the non-control genotype",
+    "analysis.min_roi_distance": "dedupe ROIs whose centroids are closer than this (px)",
+    "analysis.motion_max_threshold": "QC: max motion shift (px) tolerated per recording",
+    "analysis.motion_residual_threshold": "QC: residual motion (px) tolerated per recording",
+    "analysis.drift_threshold": "QC: baseline drift tolerated per recording",
+    "analysis.roi_peak_figures": "also render per-ROI peak montages (slow)",
+    "analysis.inactive_file": "text file of recording ids to mark inactive (one per line)",
 }

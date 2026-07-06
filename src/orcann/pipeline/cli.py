@@ -4,15 +4,16 @@
     orcann motion_correction --config config.yaml [--force] [--task-id N]
     orcann infer             --config config.yaml [--force] [--task-id N]
     orcann segment           --config config.yaml [--force] [--task-id N] [--sweep k=v1,v2]
-    orcann detect_transients --config config.yaml [--force] [--task-id N]
+    orcann activity          --config config.yaml [--force] [--task-id N]
     orcann analysis          --config config.yaml [--force]
     orcann train_spatial     --config config.yaml [--synthetic]
-    orcann train_temporal    --config config.yaml [--synthetic]
 
 Spatial detection is split: `infer` runs the GPU model once and caches the
 probability map; `segment` (CPU, no model) thresholds + extracts and is the cheap
-stage you re-run while tuning. Every subcommand accepts --set section.key=value
-(repeatable) and --dump-config PATH. Paths and models live in the config.
+stage you re-run while tuning. `activity` then baseline-corrects, deconvolves
+(OASIS) and renders the per-recording HTML gallery; `analysis` aggregates across
+recordings. Every subcommand accepts --set section.key=value (repeatable) and
+--dump-config PATH. Paths and the model live in the config.
 """
 import argparse
 import glob
@@ -21,6 +22,12 @@ import os
 from orcann.configLoader import Config
 
 _EXTS = ("*.nd2", "*.tif", "*.tiff", "*.npy")
+# Sidecars the motion_correction stage writes next to each corrected movie in
+# data/pre_processed. They must not be mistaken for recordings: <stem>_mc.json is
+# already excluded (not a movie extension), but <stem>_mc_shifts.npy matches the
+# *.npy glob and would otherwise be counted as an extra recording, doubling the
+# infer/segment array size and mapping tasks onto shift arrays.
+_SIDECAR_SUFFIXES = ("_mc_shifts.npy", "_shifts.npy")
 
 
 def list_recordings(dirpath, task_id=None):
@@ -28,6 +35,8 @@ def list_recordings(dirpath, task_id=None):
     if not dirpath or not os.path.isdir(dirpath):
         return []
     files = sorted(sum([glob.glob(os.path.join(dirpath, e)) for e in _EXTS], []))
+    files = [f for f in files
+             if not os.path.basename(f).endswith(_SIDECAR_SUFFIXES)]
     if task_id is not None:
         return [files[task_id - 1]] if 1 <= task_id <= len(files) else []
     return files
@@ -71,7 +80,7 @@ def build_parser():
     sub = ap.add_subparsers(dest="stage", required=True, metavar="<stage>")
 
     p = sub.add_parser("run_pipeline",
-                       help="motion correction -> infer -> segment -> detect_transients")
+                       help="motion correction -> infer -> segment -> activity")
     _common(p)
     p.add_argument("--force", action="store_true", help="redo stages even if outputs exist")
     p.add_argument("--task-id", type=int, default=None,
@@ -80,7 +89,7 @@ def build_parser():
     for name, helptext in [
             ("motion_correction", "data/raw -> data/pre_processed (caiman env)"),
             ("infer", "pre_processed -> results/infer (GPU; cache prob maps)"),
-            ("detect_transients", "results/spatial -> results/transients")]:
+            ("activity", "results/spatial -> results/activity (dF/F0, OASIS, gallery)")]:
         p = sub.add_parser(name, help=helptext)
         _common(p)
         p.add_argument("--force", action="store_true", help="redo recordings whose output exists")
@@ -95,15 +104,13 @@ def build_parser():
     p.add_argument("--sweep", action="append", default=[], metavar="key=v1,v2,...",
                    help="preview a parameter grid (montage + table), no extraction; repeatable")
 
-    p = sub.add_parser("analysis", help="results/transients -> results/analysis (group figures + tables)")
+    p = sub.add_parser("analysis", help="results/activity -> results/analysis (group figures + tables)")
     _common(p)
     p.add_argument("--force", action="store_true", help="rebuild even if outputs exist")
 
-    for name, helptext in [("train_spatial", "train the segmenter"),
-                           ("train_temporal", "train/evaluate the temporal head")]:
-        p = sub.add_parser(name, help=helptext)
-        _common(p)
-        p.add_argument("--synthetic", action="store_true", help="self-test on synthetic data")
+    p = sub.add_parser("train_spatial", help="train the segmenter")
+    _common(p)
+    p.add_argument("--synthetic", action="store_true", help="self-test on synthetic data")
 
     return ap
 
@@ -140,15 +147,12 @@ def main(argv=None):
     elif a.stage == "segment":
         from orcann.pipeline import run_segment
         run_segment.run(cfg, task_id=a.task_id, force=a.force, sweeps=a.sweep)
-    elif a.stage == "detect_transients":
-        from orcann.pipeline import detect_transients
-        detect_transients.run(cfg, task_id=a.task_id, force=a.force)
+    elif a.stage == "activity":
+        from orcann.pipeline import run_activity
+        run_activity.run(cfg, task_id=a.task_id, force=a.force)
     elif a.stage == "train_spatial":
         from orcann.pipeline import run_train_spatial
         run_train_spatial.run(cfg, synthetic=a.synthetic)
-    elif a.stage == "train_temporal":
-        from orcann.pipeline import run_train_temporal
-        run_train_temporal.run(cfg, synthetic=a.synthetic)
     elif a.stage == "analysis":
         from orcann.pipeline import run_analysis
         run_analysis.run(cfg, force=a.force)

@@ -1,0 +1,10 @@
+training movies (to train the spatial segmenter)
+
+  <stem>.tif / <stem>.tiff
+
+Each movie pairs with a same-stem mask in ../masks/.
+Read by: train_spatial.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

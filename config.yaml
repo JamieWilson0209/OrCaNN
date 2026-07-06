@@ -10,40 +10,67 @@ paths:
   pre_processed: "data/pre_processed"  # motion-corrected movies (motion_correction output, infer input)
   infer: "results/infer"               # cached probability maps (infer output, segment input)
   spatial: "results/spatial"           # segment output: <spatial>/<recording_id>/
-  transients: "results/transients"     # detect_transients output: <transients>/<recording_id>/
+  activity: "results/activity"         # activity output: <activity>/<recording_id>/ (calcium-format, analysis input)
   analysis: "results/analysis"         # analysis stage output (group figures + tables)
 
-# Trained models used by the detection stages
+# Trained segmenter used by the spatial detection stages
 models:
-  spatial: "models/seg_final/segmenter.pt"   # trained segmenter (.pt)
-  temporal: "models/temporal/rate_model.pt"  # trained temporal rate model (.pt)
+  spatial: "models/seg_final/segmenter.pt"  # trained segmenter (.pt)
 
-# Spatial stage (segmentation) knobs - used by segment
+# Recording-wide imaging metadata
+imaging:
+  frame_rate: 2.0     # recording frame rate in Hz
+  indicator: "fluo4"  # calcium indicator; resolves a decay time when deconvolution.decay_time is null
+
+# Spatial detection (segmentation) knobs - used by segment
 spatial:
-  threshold: 0.5         # soma-probability cut, ~0.5-0.6
+  threshold: 0.3         # soma-probability cut, ~0.5-0.6
   watershed: false       # split touching cells (false = connected components, which merge them)
   min_distance: 4        # min peak separation in px for watershed seeding
   min_area: 4            # drop detected regions smaller than this many px (0 disables)
-  min_radius: 0.0        # or drop regions below this equivalent radius in px
+  min_radius: 3.0        # or drop regions below this equivalent radius in px
   resize_to: 0           # force each frame to NxN when pixel size is unknown (0 = off)
   train_um_per_px: null  # override the model's recorded training pixel size (null = use model's)
 
-# Temporal stage (transient detection) knobs - detect_transients
-temporal:
-  frame_rate: 2.0      # recording frame rate in Hz
-  min_prominence: 0.5  # rate-units prominence a transient must clear (main sensitivity knob)
-  floor_pct: 25.0      # height floor = this percentile of the rate (gates quiet baseline)
-  min_isi_s: 1.0       # minimum separation between transients, in seconds
+# Baseline correction (dF/F0) - first half of the activity stage
+baseline:
+  method: "global_dff"   # direct | global_dff (per-trace rolling percentile) | local_background (tissue-masked)
+  percentile: 8.0        # baseline percentile for global_dff
+  window_fraction: 0.25  # rolling-baseline window as a fraction of trace length
+  min_window: 50         # minimum rolling-baseline window (frames)
+  max_window: 500        # maximum rolling-baseline window (frames)
+  presmooth_sigma: 2.0   # Gaussian smoothing (frames) for F0 estimation only; lifts F0 to the true resting level on noisy traces; 0 = off
+
+# Spike deconvolution (OASIS) - second half of the activity stage
+deconvolution:
+  enabled: true               # run OASIS spike inference (false = skip; analysis then has no spikes)
+  method: "oasis"             # oasis (AR deconvolution) | threshold (peak detection) | robust (deterministic transient detector)
+  decay_time: null            # indicator decay time in s (null = resolve from imaging.indicator)
+  optimize_g: true            # let OASIS fit the AR coefficient from data
+  penalty: 0.0                # L1 sparsity penalty; 0 = auto-tune (recommended for OASIS)
+  noise_method: "mean"        # OASIS noise estimator: mean | median | logmexp
+  s_min: 0.1                  # min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)
+  noise_gate_sigma: 3.5       # keep only spikes exceeding this multiple of the trace noise floor (0 = no gate)
+  robust_safety_net: true     # on the oasis path, backfill clear transients OASIS missed (true recommended)
+  robust_k_onset: 3.0         # robust detector: event onset threshold as a multiple of noise
+  robust_k_peak: 5.0          # robust detector: required peak height as a multiple of noise (main precision knob)
+  robust_min_duration_s: 0.5  # robust detector: minimum event duration in seconds (rejects single-sample noise)
 
 # Motion correction (caiman env) - motion_correction stage
 motion_correction:
   mode: "auto"   # rigid | piecewise_rigid | auto
   max_shift: 20  # maximum shift in px
 
-# QC figures written by the detection stages
+# Spatial QC figure written by segment
 figures:
-  enabled: true       # write QC figures (overlay + per-ROI panels)
-  max_roi_figures: 0  # cap per-ROI panels, keeping the most active (0 = all)
+  enabled: true  # write the spatial QC overlay in segment
+
+# Per-recording HTML galleries written by the activity stage
+gallery:
+  interactive: true   # per-recording interactive HTML gallery (gallery.html)
+  movie: false        # full-movie HTML viewer (large file; off by default)
+  movie_subsample: 1  # keep every Nth frame in the movie gallery
+  max_rois: 500       # cap the number of ROIs drawn in the gallery
 
 # train_spatial - fit the segmenter
 train_spatial:
@@ -60,27 +87,12 @@ train_spatial:
   val_frac: 0.2                                # fraction of recordings held out for validation
   holdout: true                                # hold out val_frac to evaluate; false = train final model on all data
 
-# train_temporal - fit/evaluate the temporal head
-train_temporal:
-  gt_dir: "data/public_gt"                            # dir of CASCADE ground-truth .mat files
-  indicator_map: "data/public_gt/indicator_map.json"  # JSON mapping each .mat filename to an indicator label
-  report: "results/loio/report.json"                  # JSON path for the LOIO validation table (null to skip validation)
-  save_final: "models/temporal/rate_model.pt"         # path to save the model fit on all data, loaded by detect_transients (null to skip)
-  target_fs: 2.0                                      # resample public ground truth to this rate, Hz
-  epochs: 25                                          # training epochs
-  scale_dropout: 0.0                                  # fraction of wavelet-scale channels dropped in training (0 = off)
-  exclude: []                                         # drop indicator groups whose label contains any of these substrings
-
-# scripts/visualize_transients.py - per-ROI inspection figure
-viz:
-  traces: null                            # (n_roi, T) fluorescence traces (.npy)
-  model: "models/temporal/rate_model.pt"  # trained temporal model (.pt)
-  out: "transients.png"                   # output figure path (.png)
-
-#
+# Group analysis - cross-recording statistics + genotype/day figures
 analysis:
-  day_regex: "D([0-9]+)"            # recording_id regex; capture group 1 -> developmental day (int)
-  line_regex: "D[0-9]+[_-]([^_]+)"  # recording_id regex; capture group 1 -> line/clone token
-  control_prefix: "3"               # line tokens starting with this are Control, else Mutant
-  rois: "auto"
-  max_rois: 6
+  mutant_label: "CEP41 R242H"     # legend label for the non-control genotype
+  min_roi_distance: 5.0          # dedupe ROIs whose centroids are closer than this (px)
+  motion_max_threshold: 15.0      # QC: max motion shift (px) tolerated per recording
+  motion_residual_threshold: 2.0  # QC: residual motion (px) tolerated per recording
+  drift_threshold: 1.0            # QC: baseline drift tolerated per recording
+  roi_peak_figures: false         # also render per-ROI peak montages (slow)
+  inactive_file: null             # text file of recording ids to mark inactive (one per line)

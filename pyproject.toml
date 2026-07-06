@@ -4,19 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orcann"
-version = "0.1.0"
-description = "A single derivative-of-Gaussian operator for spatial and temporal calcium-imaging analysis"
+version = "0.2.0"
+description = "Organoid calcium-imaging pipeline: learned soma segmentation, OASIS deconvolution, and group analysis"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "scikit-image>=0.21",
+    "scikit-learn>=1.2",   # feature scaling in the group analysis
+    "pandas>=2.0",         # tabular metrics in the group analysis
     "tifffile>=2023.7",
     "nd2>=0.10",
     "h5py>=3.9",
     "pyyaml>=6.0",
     "matplotlib>=3.7",
-    "roifile>=2023.0",   # ImageJ/FIJI ROI sets (annotation intake)
+    "pillow>=10.0",        # base64 PNG encoding in the HTML galleries
+    "roifile>=2023.0",     # ImageJ/FIJI ROI sets (annotation intake)
 ]
 
 # torch is installed separately in setup_hpc.sh so the CUDA build can be

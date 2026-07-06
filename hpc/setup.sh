@@ -72,25 +72,50 @@ setup_caiman() {
     solver="$(command -v mamba >/dev/null 2>&1 && echo mamba || echo conda)"
     mkdir -p "$(dirname "${CAIMAN_ENV}")"
     if [ ! -d "${CAIMAN_ENV}" ]; then
-        # one solve: conda-forge resolves caiman and a compatible stack.
-        "${solver}" create --yes --prefix "${CAIMAN_ENV}" -c conda-forge caiman "python=3.11"
+        # one solve: conda-forge resolves caiman and a compatible stack. opencv is
+        # pinned below 5 (opencv 4.x is long-tested with caiman) and libjxl is
+        # named EXPLICITLY: conda-forge's opencv (4.x and 5.x alike) links
+        # libjxl.so.0.11, but the library is not always materialised as a
+        # transitive dependency, which surfaces later as an ImportError when
+        # caiman imports cv2. Listing libjxl forces conda to install the file.
+        "${solver}" create --yes --prefix "${CAIMAN_ENV}" -c conda-forge caiman "opencv<5" libjxl "python=3.11"
     fi
     activate "${CAIMAN_ENV}"
+            # opencv is pulled in by caiman (caiman/base/movies.py imports cv2) and links
+    # libjxl.so.0.11. conda-forge does not always materialise libjxl as a
+    # transitive dependency, so caiman's first cv2 import fails with:
+    #   ImportError: libjxl.so.0.11: cannot open shared object file
+    # Naming opencv (<5, the caiman-tested line) AND libjxl explicitly forces both
+    # onto disk at a matching version. Runs every time (idempotent), so it repairs
+    # an env created before this fix, not just fresh creates.
+    "${solver}" install --yes --prefix "${CAIMAN_ENV}" -c conda-forge "opencv<5" libjxl
+    if ! python -c "import cv2" 2>/dev/null; then
+        echo "ERROR: cv2 still fails to import in ${CAIMAN_ENV}." >&2
+        echo "  libjxl may be registered but not extracted; force it:" >&2
+        echo "  ${solver} install --prefix ${CAIMAN_ENV} -c conda-forge --force-reinstall 'libjxl=0.11'" >&2
+        echo "  then re-run setup." >&2
+        exit 1
+    fi
     # The motion-correction path is deliberately torch-free (pipeline/__init__ is
     # import-light; caiman is lazy-imported), so we can give the caiman env the
-    # `orcann` command WITHOUT pulling the torch/segmentation stack. Install:
+    # `orcann` command WITHOUT pulling the torch/segmentation stack. This env runs
+    # TWO stages: motion_correction and activity (OASIS deconvolution is CaImAn's
+    # constrained_foopsi, plus the dF/F0 baseline and the HTML gallery). Install:
     #   - nd2 (Nikon reader) + tifffile: the movie-I/O extras on top of caiman.
     #   - pyyaml: configLoader needs it to read the config (caiman does not
     #     guarantee it).
+    #   - pillow: base64 PNG encoding for the activity stage's HTML gallery.
     #   - orcann itself, editable and --no-deps: registers the `orcann` console
     #     script (so every job script invokes stages uniformly) while pip leaves
-    #     caiman's pinned numpy/scipy/scikit-image/tifffile untouched. The MC path
-    #     imports only numpy/tifffile/nd2/yaml/caiman, all present here.
+    #     caiman's pinned numpy/scipy/scikit-image/tifffile untouched. The MC and
+    #     activity paths import only numpy/scipy/scikit-image/matplotlib/pillow/
+    #     tifffile/nd2/yaml/caiman, all present here (scikit-learn/pandas are only
+    #     needed by the analysis stage, which runs in the torch env).
     # A CUDA torch wheel is still NOT installed; caiman brings what it needs.
     python -m pip install --upgrade pip
-    python -m pip install "nd2>=0.10" "tifffile>=2023.7" "pyyaml>=6.0"
+    python -m pip install "nd2>=0.10" "tifffile>=2023.7" "pyyaml>=6.0" "pillow>=10.0"
     python -m pip install -e "${REPO_ROOT}" --no-deps
-    python -c "import caiman, numpy, nd2, tifffile, yaml, orcann; print('  caiman env ready |', caiman.__version__)"
+    python -c "import caiman, numpy, nd2, tifffile, yaml, PIL, orcann; print('  caiman env ready |', caiman.__version__)"
     command -v orcann >/dev/null && echo "  orcann command: $(command -v orcann)" \
         || { echo "  ERROR: orcann not on PATH after install" >&2; exit 1; }
 }

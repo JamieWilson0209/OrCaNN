@@ -85,7 +85,7 @@ def _expand_sweeps(sweeps):
 
 def run(cfg, task_id=None, force=False, sweeps=None):
     inf, pre, out = cfg.paths.infer, cfg.paths.pre_processed, cfg.paths.spatial
-    sp, fg, tp = cfg.spatial, cfg.figures, cfg.temporal
+    sp, fg, frame_rate = cfg.spatial, cfg.figures, cfg.imaging.frame_rate
     recs = _infer_recs(inf, task_id)
     if not recs:
         print(f"segment: no cached prob maps in {inf} (run infer first)"); return
@@ -123,16 +123,16 @@ def run(cfg, task_id=None, force=False, sweeps=None):
                                      "removed": n0 - int(traces.shape[0])}}
 
         rec_dir = infer.write_recording(
-            out, rec_id, traces=traces, frame_rate=tp.frame_rate,
+            out, rec_id, traces=traces, frame_rate=frame_rate,
             detection=base, stage="segment (threshold + extract)", models=models,
             labels=labels, centroids=centroids, max_projection=maxproj,
             source=mv, extra_meta=cur_meta)
         if fg.enabled:
-            infer.write_figures(rec_dir, None, traces, None, tp.frame_rate, {},
+            infer.write_figures(rec_dir, None, traces, None, frame_rate, {},
                                 max_projection=maxproj, labels=labels, centroids=centroids)
         tag = f"  (curated -{cur_meta['curation']['removed']})" if cur_meta else ""
         print(f"{rec_id:28s} {int(traces.shape[0]):6d} cells{tag}")
-    print(f"spatial outputs -> {out}/<recording_id>/  (now run: detect_transients)")
+    print(f"spatial outputs -> {out}/<recording_id>/  (now run: activity)")
 
 
 def _run_sweep(cfg, recs, sweeps):

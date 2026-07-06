@@ -1,0 +1,11 @@
+group analysis output: figures and tables (one aggregate run, not per-recording)
+
+  data/     analysis_results.json  dataset_features.csv  selected_rois.csv
+            quality_gating.json  outlier_report.txt
+  figures/  grouped QC, genotype and developmental-day comparison figures
+
+Written by: analysis.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

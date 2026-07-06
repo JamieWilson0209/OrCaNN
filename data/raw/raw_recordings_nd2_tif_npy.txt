@@ -1,0 +1,10 @@
+raw recordings (pipeline input)
+
+Put one file per recording here:
+  .nd2 / .tif / .tiff / .npy   shape (T, H, W)
+
+Read by: motion_correction (or start at infer if already motion-corrected).
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.
