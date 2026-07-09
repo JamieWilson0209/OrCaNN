@@ -57,14 +57,7 @@ def generate_figures(
         ├── 1 - Main Results/       Headline figures
         ├── 1b - Metrics/           Individual bar chart metrics
         ├── Correlation Graphs/     Correlation matrices (one per dataset)
-        ├── Full Overview/          Combined multi-dataset views
-        ├── Results by Dataset/     All per-dataset outputs
-        │   ├── D109_R1/
-        │   │   ├── raster.png
-        │   │   ├── correlation.png
-        │   │   └── neuron_selection.png
-        │   ...
-        └── Temporal Visualisations/  Raster plots, traces
+        └── Full Overview/          Combined multi-dataset views
     """
 
     # Create new directory structure matching user preferences
@@ -74,8 +67,6 @@ def generate_figures(
         'metrics': os.path.join(base_dir, '1b - Metrics'),
         'correlations': os.path.join(base_dir, 'Correlation Graphs'),
         'overview': os.path.join(base_dir, 'Full Overview'),
-        'per_dataset': os.path.join(base_dir, 'Results by Dataset'),
-        'temporal': os.path.join(base_dir, 'Temporal Visualisations'),
     }
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
@@ -91,9 +82,8 @@ def generate_figures(
     paths.append(_fig_feature_heatmap(X_std, names, feat_labels, labels, dirs['main_results']))
     paths.append(_fig_neuron_distributions(datasets, labels, colors, dirs['overview']))
     
-    # ── Per-dataset figures (split into individual files) ─────────────────
-    paths.extend(_fig_raster_plots_split(datasets, labels, colors, dirs['temporal'], dirs['per_dataset']))
-    paths.extend(_fig_correlation_matrices_split(datasets, labels, colors, dirs['correlations'], dirs['per_dataset']))
+    # ── Per-recording correlation matrices ────────────────────────────────
+    paths.extend(_fig_correlation_matrices_split(datasets, labels, colors, dirs['correlations']))
     paths.append(_fig_population_activity(datasets, labels, colors, dirs['overview']))
     
     # ── Per-metric figures ────────────────────────────────────────────────
@@ -179,152 +169,12 @@ def _fig_neuron_distributions(datasets, labels, colors, output_dir):
     return path
 
 
-def _fig_raster_plots_split(datasets, labels, colors, raster_dir, per_dataset_dir):
-    """
-    Generate individual raster plot figures for each dataset.
-    
-    Outputs:
-    - rasters/<dataset_name>.png — individual raster plots
-    - Results by Dataset/<n>/raster.png — detailed raster per dataset
-    """
-
-    os.makedirs(raster_dir, exist_ok=True)
-    paths = []
-    
-    for i, ds in enumerate(datasets):
-        result_path = Path(ds.filepath)
-        spikes_path = result_path / 'data' / 'spike_trains.npy'
-        denoised_path = result_path / 'data' / 'traces_denoised.npy'
-        
-        if not spikes_path.exists():
-            continue
-        
-        S_all = np.load(spikes_path)
-
-        # Exclude edge ROIs
-        valid = _load_valid_mask(result_path)
-        if valid is not None and len(valid) == S_all.shape[0]:
-            valid_idx = np.where(valid)[0]
-        else:
-            valid_idx = np.arange(S_all.shape[0])
-        
-        S = S_all[valid_idx]
-        N, T = S.shape
-        t_ax = np.arange(T) / ds.frame_rate
-        ds_col = "#5B8DBE"
-        
-        # Load denoised traces for example panel
-        C_den = None
-        C_raw_valid = None
-        if denoised_path.exists():
-            C_all = np.load(denoised_path)
-            C_den = C_all[valid_idx]
-        raw_path = result_path / 'data' / 'temporal_traces.npy'
-        if raw_path.exists():
-            C_raw_valid = np.load(raw_path)[valid_idx]
-        
-        # Full detailed raster figure
-        fig = plt.figure(figsize=(16, 10))
-        fig.patch.set_facecolor('white')
-        gs = fig.add_gridspec(3, 1, height_ratios=[4, 1, 3], hspace=0.3)
-        
-        # 1. Raster
-        ax_raster = fig.add_subplot(gs[0])
-        spike_counts = np.array([np.sum(S[j] > 0) for j in range(N)])
-        order = np.argsort(spike_counts)[::-1]
-        
-        for row_i, neuron_idx in enumerate(order):
-            spike_times = np.where(S[neuron_idx] > 0)[0] / ds.frame_rate
-            ax_raster.scatter(spike_times, np.full_like(spike_times, row_i),
-                              s=0.5, c='black', marker='|', linewidths=0.5)
-        
-        ax_raster.set_ylim(-0.5, N - 0.5)
-        ax_raster.set_xlim(0, t_ax[-1])
-        ax_raster.set_ylabel('Neuron', fontsize=10)
-        ax_raster.set_title(f'{_abbrev(ds.name)} — Spike Raster ({N} neurons)',
-                            fontsize=12, fontweight='bold', color=ds_col)
-        ax_raster.tick_params(labelsize=8)
-        
-        # 2. Population rate
-        ax_pop = fig.add_subplot(gs[1], sharex=ax_raster)
-        bin_width = max(0.5, t_ax[-1] / 200)
-        bins = np.arange(0, t_ax[-1] + bin_width, bin_width)
-        pop_counts = np.zeros(len(bins) - 1)
-        for j in range(N):
-            spike_times_j = np.where(S[j] > 0)[0] / ds.frame_rate
-            hist, _ = np.histogram(spike_times_j, bins=bins)
-            pop_counts += hist
-        bin_centres = (bins[:-1] + bins[1:]) / 2
-        ax_pop.fill_between(bin_centres, pop_counts / N, color=ds_col, alpha=0.5)
-        ax_pop.plot(bin_centres, pop_counts / N, color=ds_col, linewidth=0.8)
-        ax_pop.set_ylabel('Mean spikes\nper neuron', fontsize=9)
-        ax_pop.set_xlabel('Time (s)', fontsize=10)
-        ax_pop.tick_params(labelsize=8)
-        
-        # 3. Example traces (top 6 by robust quality)
-        ax_traces = fig.add_subplot(gs[2], sharex=ax_raster)
-        n_examples = min(6, N)
-        if C_den is not None and C_den.shape[0] >= n_examples:
-            quality = np.array([_trace_snr(C_den[j]) for j in range(C_den.shape[0])])
-            top_idx = np.argsort(quality)[::-1][:n_examples]
-            
-            offsets = np.arange(n_examples) * 1.2
-            for plot_i, idx in enumerate(top_idx):
-                trace_norm = C_den[idx]
-                r = np.percentile(trace_norm, 99) - np.percentile(trace_norm, 1)
-                if r > 0:
-                    trace_norm = (trace_norm - np.percentile(trace_norm, 1)) / r
-                ax_traces.plot(t_ax[:len(trace_norm)],
-                               trace_norm + offsets[plot_i],
-                               color='#00e676', linewidth=0.6)
-                # Spike markers
-                spk = np.where(S[idx] > 0)[0]
-                if len(spk) > 0:
-                    ax_traces.scatter(spk / ds.frame_rate,
-                                      trace_norm[spk] + offsets[plot_i],
-                                      color='red', s=8, zorder=5)
-                # ROI label
-                orig_idx = valid_idx[idx] if valid is not None else idx
-                ax_traces.text(0, offsets[plot_i] + 0.5,
-                               f'ROI {orig_idx}', fontsize=7, fontweight='bold',
-                               va='center', ha='right')
-            
-            ax_traces.set_ylabel(f'ΔF/F₀ traces (top {n_examples} by quality)', fontsize=9)
-            ax_traces.set_yticks([])
-        else:
-            ax_traces.text(0.5, 0.5, 'No denoised traces', ha='center',
-                           va='center', transform=ax_traces.transAxes)
-        ax_traces.set_xlabel('Time (s)', fontsize=10)
-        ax_traces.tick_params(labelsize=8)
-        ax_traces.set_xlim(0, t_ax[-1])
-        
-        plt.tight_layout()
-        
-        # Save to rasters directory
-        safe_name = ds.name.replace('/', '_').replace(' ', '_')[:50]
-        raster_path = os.path.join(raster_dir, f'{safe_name}.png')
-        plt.savefig(raster_path, dpi=200, bbox_inches='tight', facecolor='white')
-        paths.append(raster_path)
-        
-        # Also save to per-dataset directory
-        ds_dir = os.path.join(per_dataset_dir, safe_name)
-        os.makedirs(ds_dir, exist_ok=True)
-        plt.savefig(os.path.join(ds_dir, 'raster.png'), dpi=200, 
-                   bbox_inches='tight', facecolor='white')
-        
-        plt.close()
-    
-    logger.info(f"Generated {len(paths)} individual raster plots in {raster_dir}")
-    return paths
-
-
-def _fig_correlation_matrices_split(datasets, labels, colors, corr_dir, per_dataset_dir):
+def _fig_correlation_matrices_split(datasets, labels, colors, corr_dir):
     """
     Generate individual correlation matrix figures for each dataset.
     
     Outputs:
     - correlations/<dataset_name>.png  — individual correlation matrices
-    - Results by Dataset/<name>/correlation.png — copy per dataset
     """
 
     os.makedirs(corr_dir, exist_ok=True)
@@ -409,12 +259,6 @@ def _fig_correlation_matrices_split(datasets, labels, colors, corr_dir, per_data
         corr_path = os.path.join(corr_dir, f'{safe_name}.png')
         plt.savefig(corr_path, dpi=200, bbox_inches='tight', facecolor='white')
         paths.append(corr_path)
-        
-        # Also save to per-dataset directory
-        ds_dir = os.path.join(per_dataset_dir, safe_name)
-        os.makedirs(ds_dir, exist_ok=True)
-        plt.savefig(os.path.join(ds_dir, 'correlation.png'), dpi=200, 
-                   bbox_inches='tight', facecolor='white')
         
         plt.close()
     
@@ -688,35 +532,15 @@ def _draw_neuron_selection_row(ax_hist, ax_traces, ds):
         ax_traces.tick_params(labelsize=6)
 
 
-def fig_neuron_selection(datasets, output_dir, per_dataset_dir=None):
+def fig_neuron_selection(datasets, output_dir):
     """
     Neuron selection transparency figure.
 
     Produces:
-    - Results by Dataset/<name>/neuron_selection.png  per dataset
     - overview/neuron_selection.png            combined overview
     """
 
     n_ds = len(datasets)
-    sel_base = per_dataset_dir or os.path.join(output_dir, 'Results by Dataset')
-
-    # ── Individual per-dataset figures ────────────────────────────────────
-    for ds in datasets:
-        safe_name = ds.name.replace('/', '_').replace(' ', '_')[:50]
-        ds_dir = os.path.join(sel_base, safe_name)
-        os.makedirs(ds_dir, exist_ok=True)
-
-        fig, (ax_hist, ax_traces) = plt.subplots(
-            1, 2, figsize=(18, 3.5),
-            gridspec_kw={'width_ratios': [1, 3]}
-        )
-        _draw_neuron_selection_row(ax_hist, ax_traces, ds)
-        fig.suptitle(f'{ds.name} — Neuron Selection',
-                     fontsize=11, fontweight='bold')
-        plt.tight_layout()
-        plt.savefig(os.path.join(ds_dir, 'neuron_selection.png'),
-                    dpi=200, bbox_inches='tight')
-        plt.close()
 
     # ── Combined overview ────────────────────────────────────────────────
     overview_dir = os.path.join(output_dir, 'Full Overview')
