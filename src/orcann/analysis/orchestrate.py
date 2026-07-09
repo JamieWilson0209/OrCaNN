@@ -203,9 +203,7 @@ def run_analysis(
     # │   ├── 1 - Main Results/        UMAP, heatmap, between-organoid
     # │   ├── 1b - Metrics/            Individual metric plots
     # │   ├── Correlation Graphs/      Correlation matrices  
-    # │   ├── Full Overview/           Population activity, quality, neuron selection
-    # │   ├── Results by Dataset/      Per-dataset folders
-    # │   └── Temporal Visualisations/ Rasters, trace comparisons
+    # │   └── Full Overview/           Population activity, quality, neuron selection
     # └── data/
     #     ├── analysis_results.json
     #     ├── dataset_features.csv
@@ -220,11 +218,9 @@ def run_analysis(
     genotype_dir = os.path.join(fig_dir, '2 - Genotype Comparison')
     correlation_dir = os.path.join(fig_dir, 'Correlation Graphs')
     overview_dir = os.path.join(fig_dir, 'Full Overview')
-    per_dataset_dir = os.path.join(fig_dir, 'Results by Dataset')
-    temporal_dir = os.path.join(fig_dir, 'Temporal Visualisations')
     
     for d in [fig_dir, data_dir, main_results_dir, metrics_dir, genotype_dir,
-              correlation_dir, overview_dir, per_dataset_dir, temporal_dir]:
+              correlation_dir, overview_dir]:
         os.makedirs(d, exist_ok=True)
     
     # Save quality gating JSON to data/
@@ -255,7 +251,7 @@ def run_analysis(
         logger.info("ROI peak frame figures disabled")
 
     # ── Neuron selection transparency ────────────────────────────────────
-    fig_neuron_selection(datasets, fig_dir, per_dataset_dir=per_dataset_dir)
+    fig_neuron_selection(datasets, fig_dir)
 
     # ── n_selected distribution ──────────────────────────────────────────
     try:
