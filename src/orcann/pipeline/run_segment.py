@@ -11,8 +11,9 @@ folder. No GPU, no model forward pass — so re-tuning is a cheap CPU job.
     segment for real.
   - curation: a per-recording results/spatial/<rec>/curate.json
         {"exclude_rois": [5, 37], "exclude_boxes": [[r0, c0, r1, c1]]}
-    drops those ROIs as a post-extraction subset (no re-segmentation). ids are the
-    numbers on figures/overlay.png; boxes are in the working/overlay resolution.
+    drops those ROIs as a post-extraction subset (no re-segmentation). ids are
+    1-based label ids (read them off the activity stage's HTML gallery, which
+    labels ROIs interactively); boxes are in the working/overlay resolution.
 
 Recordings whose traces.npy exists are skipped unless force=True.
 """
@@ -129,7 +130,7 @@ def run(cfg, task_id=None, force=False, sweeps=None):
             source=mv, extra_meta=cur_meta)
         if fg.enabled:
             infer.write_figures(rec_dir, None, traces, None, frame_rate, {},
-                                max_projection=maxproj, labels=labels, centroids=centroids)
+                                max_projection=maxproj, labels=labels)
         tag = f"  (curated -{cur_meta['curation']['removed']})" if cur_meta else ""
         print(f"{rec_id:28s} {int(traces.shape[0]):6d} cells{tag}")
     print(f"spatial outputs -> {out}/<recording_id>/  (now run: activity)")

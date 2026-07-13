@@ -34,7 +34,7 @@ MAXPROJ_NPY = "max_projection.npy"   # (H,W) float32 max over time
 PROB_NPY = "prob.npy"              # (H,W) float32 soma probability (cached by infer)
 META_JSON = "meta.json"
 
-OVERLAY_PNG = "overlay.png"          # spatial QC: outlines + centroids
+OVERLAY_PNG = "overlay.png"          # spatial QC: instance outlines
 ROI_FIG_FMT = "roi_{:03d}.png"       # temporal QC: one panel per ROI
 
 
@@ -208,31 +208,28 @@ def write_figures(out: str, model, traces: np.ndarray, rates: np.ndarray,
                   frame_rate: float, detection: Dict, *,
                   max_projection: Optional[np.ndarray] = None,
                   labels: Optional[np.ndarray] = None,
-                  centroids: Optional[np.ndarray] = None,
                   max_roi_figures: int = 0) -> int:
     """Render the spatial QC overlay into ``<out>/figures/overlay.png``.
 
-    The segment stage writes only the instance overlay (outlines + numbered
-    centroids); the interactive per-ROI trace view is the activity stage's HTML
-    gallery, so this no longer renders per-ROI temporal panels. The unused
+    The segment stage writes only the instance overlay (unlabelled outlines);
+    the interactive per-ROI trace view is the activity stage's HTML gallery, so
+    this no longer renders per-ROI temporal panels. The unused
     ``model``/``rates``/``detection`` parameters are kept for call-site
     compatibility with the shared writer signature.
     """
     fig_dir = os.path.join(out, FIGURES_DIRNAME)
     os.makedirs(fig_dir, exist_ok=True)
     if max_projection is not None and labels is not None:
-        write_overlay(os.path.join(fig_dir, OVERLAY_PNG),
-                      max_projection, labels, centroids)
+        write_overlay(os.path.join(fig_dir, OVERLAY_PNG), max_projection, labels)
     return 0
 
 
-def write_overlay(path: str, max_proj: np.ndarray, labels: np.ndarray,
-                  centroids: Optional[np.ndarray] = None) -> None:
-    """Instance outlines + numbered centroids on the max projection.
+def write_overlay(path: str, max_proj: np.ndarray, labels: np.ndarray) -> None:
+    """Instance outlines on the max projection.
 
-    Boundaries come straight from the label image (instance-aware), and the
-    centroid numbers match the ROI index used in ``roi_<i>.png`` so the spatial
-    and temporal figures cross-reference.
+    Boundaries come straight from the label image (instance-aware). ROI indices
+    are not drawn; use the activity stage's HTML gallery to identify individual
+    ROIs.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -246,10 +243,6 @@ def write_overlay(path: str, max_proj: np.ndarray, labels: np.ndarray,
     fig, ax = plt.subplots(figsize=(8, 8 * H / max(W, 1)))
     ax.imshow(np.clip(mp, 0, 1), cmap="gray")
     ax.imshow(np.ma.masked_where(~b, b), cmap="autumn", alpha=0.9)
-    if centroids is not None and len(centroids):
-        c = np.asarray(centroids).reshape(-1, 2)
-        for i, (r, col) in enumerate(c):
-            ax.text(col + 1.5, r - 1.5, str(i), color="#e74c3c", fontsize=6)
     ax.set_title(f"{int(labels.max())} ROIs", fontsize=10)
     ax.axis("off")
     fig.tight_layout()

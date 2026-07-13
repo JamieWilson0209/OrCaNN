@@ -62,8 +62,8 @@ def subset_rois(labels, centroids, traces, exclude_rois=None, exclude_boxes=None
     """Drop curated ROIs and relabel; returns ``(labels, centroids, traces)``.
 
     Curation is a post-extraction subset (no re-segmentation): ``exclude_rois`` is
-    a list of 1-based ids exactly as numbered on the overlay (row i of traces is
-    label i+1 is centroid i); ``exclude_boxes`` is a list of ``[r0, c0, r1, c1]``
+    a list of 1-based label ids (row i of traces is label i+1 is centroid i);
+    ``exclude_boxes`` is a list of ``[r0, c0, r1, c1]``
     pixel boxes (in the working/overlay resolution) and drops any ROI whose
     centroid lies inside. The label image is relabelled contiguous 1..K so the
     kept axis stays consistent across labels / centroids / traces.
