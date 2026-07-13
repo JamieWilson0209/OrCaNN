@@ -20,6 +20,8 @@
 
 The figures on this page all come from a single five-minute recording (601 frames at 2 Hz), used as a worked example of what each stage produces.
 
+Current models use limited training data which cannot fully populate the network weights. Increasing the training data pool for organoid recordings is the top priority for this project
+
 ---
 
 ## The pipeline
@@ -146,7 +148,6 @@ Paths, model and thresholds are all set in one YAML file. Every stage also runs 
 - The absolute event rate on Fluo-4 is **uncalibrated**; comparisons should be relative.
 - Detection is validated against **manual annotation**, not a public benchmark, as none exists for this modality.
 - **Timing finer than one frame is not recoverable** at 2 Hz. Reported durations are characteristic timescales, reliable in their ordering rather than in absolute seconds.
-- **Neuropil correction is disabled**, as its geometric assumptions do not hold in organoid tissue.
 - The **event gate favours precision**: in the example above, 61 cells clear it out of the 121 that visibly participate.
 - Genotype and developmental day are **parsed from the recording filename**; check `dataset_features.csv` after a first run.
 
