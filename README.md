@@ -20,7 +20,7 @@
 
 The figures on this page all come from a single five-minute recording (601 frames at 2 Hz), used as a worked example of what each stage produces.
 
-Current models use limited training data which cannot fully populate the network weights. Increasing the training data pool for organoid recordings is the top priority for this project
+Current models uses limited training data which cannot fully populate the network weights. Increasing the training data pool for organoid recordings is the top priority for this project.
 
 ---
 
