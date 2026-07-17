@@ -2,7 +2,9 @@
 
 Finds every cell in a microscope video of lab-grown brain tissue, measures when each one fires, and compares mutant tissue against control.
 
-Everything below is one real recording: **`D98_0-3_050226_R1`**, 601 frames at 2 Hz, five minutes of a day-98 organoid.
+Aquiring more training data is a top priority for this project
+
+Everything below is one real recording, 601 frames at 2 Hz, five minutes of a day-98 organoid.
 
 ---
 
