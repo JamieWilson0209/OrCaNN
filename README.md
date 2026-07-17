@@ -2,7 +2,7 @@
 
 Finds every cell in a microscope video of lab-grown brain tissue, measures when each one fires, and compares mutant tissue against control.
 
-Aquiring more training data is a top priority for this project
+Training data limitations predispose detection towards small features: Aquiring more training data is a top priority for this project
 
 Everything below is one real recording, 601 frames at 2 Hz, five minutes of a day-98 organoid.
 
