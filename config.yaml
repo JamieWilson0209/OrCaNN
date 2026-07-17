@@ -51,7 +51,7 @@ deconvolution:
   noise_method: "mean"        # OASIS noise estimator: mean | median | logmexp
   s_min: 0.1                  # min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)
   noise_gate_sigma: 3.5       # keep only spikes exceeding this multiple of the trace noise floor (0 = no gate)
-  robust_safety_net: true     # on the oasis path, backfill clear transients OASIS missed (true recommended)
+  robust_safety_net: false     # on the oasis path, backfill clear transients OASIS missed (true recommended)
   robust_k_onset: 3.0         # robust detector: event onset threshold as a multiple of noise
   robust_k_peak: 5.0          # robust detector: required peak height as a multiple of noise (main precision knob)
   robust_min_duration_s: 0.5  # robust detector: minimum event duration in seconds (rejects single-sample noise)
