@@ -42,17 +42,7 @@ Five restartable stages. The GPU step runs once and its output is cached, so ret
 
 ![activity raster and population mean](docs/img/activity_raster.png)
 
-**Twelve population-wide transients**, every 13 to 16 seconds, fading across the recording.
 
-| | |
-|---|---|
-| Cells detected | 279 |
-| Cells carrying signal | 128 |
-| Cells joining ≥ 6 of the 12 transients | 75 |
-| Cells passing the event gate | 11 |
-| Events called | 45 |
-
-The distance between 75 and 11 is the honest headline of this stage. At 2 Hz an event is only a few frames wide, so the gate is strict on purpose: a minimum amplitude, a noise floor measured on each individual trace, and a minimum duration in real seconds. It buys precision and pays in recall. The raster shows exactly what the gate is leaving on the table.
 
 ---
 
@@ -64,9 +54,9 @@ The distance between 75 and 11 is the honest headline of this stage. At 2 Hz an 
 
 **The slow decline** from 490 to 456 is photobleaching. The rolling baseline absorbs it.
 
-**The twelve sharp transients** are the network. Fast rise, slow decay, regular interval, and 75 of 279 cells rise with them. A light-source glitch does not do that.
+**The twelve sharp transients** are the network. Fast rise, slow decay, regular interval.
 
-The red annotation is the diagnostic's automatic call: *step at frame 22*. It is the onset of the first transient, and it is a **false positive**. That is the design. The module measures, flags, and writes the numbers to `run_info.json`. A human adjudicates. It corrects nothing, because the artefact it screens for (a whole-field intensity step, landing on every cell at once and reading as network synchrony) is indistinguishable from the finding itself, and silently subtracting it would destroy the result it exists to protect.
+The red annotation is the diagnostic's automatic call: *step at frame 22*. It is the onset of the first transient, and it is a **false positive**. That is the design. The module measures, flags, and writes the numbers to `run_info.json`. A human adjudicates. It corrects nothing, because the artefact it screens for (a whole-field intensity step, landing on every cell at once and reading as network synchrony) is indistinguishable from the finding itself.
 
 ---
 
@@ -76,7 +66,6 @@ Group analysis pools every recording, gates on motion and drift, deduplicates ce
 
 One rule holds the statistics up: **the organoid line is the experimental unit**, not the recording. Four recordings of one organoid are one sample.
 
-> *(group comparison figure to go here)*
 
 ---
 
@@ -86,7 +75,7 @@ One rule holds the statistics up: **the organoid line is the experimental unit**
 - Detection is validated against **manual annotation**, not a public benchmark. None exists for this modality.
 - **No sub-frame timing** at 2 Hz. Durations are characteristic timescales: faithful in order, indicative in seconds.
 - **Neuropil correction is off.** Its geometric assumptions do not hold in an organoid.
-- The event gate is **weighted towards precision**. See the 75-versus-11 gap above.
+- The event gate is **weighted towards precision**. 
 
 ---
 
