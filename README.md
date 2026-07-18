@@ -92,4 +92,4 @@ qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh
 
 One YAML file holds every path, model and threshold. `orcann train_spatial --synthetic` self-tests with no data and no GPU.
 
-Full setup: [`README.md`](README.md) · [`hpc/README_HPC.md`](hpc/README_HPC.md)
+Full setup: docs/README.md · [`hpc/README_HPC.md`](hpc/README_HPC.md)
