@@ -41,3 +41,16 @@ export CUDA_BUILD="${CUDA_BUILD:-cu121}"
 
 # Keep ~/.local user-site packages from leaking into the prefix env.
 export PYTHONNOUSERSITE=1
+
+# Package caches. The cluster's base pkgs dir is READ ONLY, so conda falls back
+# to ~/.conda/pkgs, which sits on a quota-limited home directory (~10 GB on
+# Eddie). A caiman solve writes ~200 MB of conda-forge repodata before it
+# downloads anything, so a nearly-full home aborts the solve with:
+#   OSError: [Errno 122] Disk quota exceeded
+# and conda reports it as "An unexpected error has occurred" plus a suggestion
+# to disable plugins, which is a red herring. Pointing every cache at scratch
+# avoids this. pip's cache is redirected for the same reason: the CUDA torch
+# wheels are several GB.
+export CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-/exports/eddie/scratch/$USER/conda/pkgs}"
+export CONDA_ENVS_DIRS="${CONDA_ENVS_DIRS:-/exports/eddie/scratch/$USER/conda/envs}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/exports/eddie/scratch/$USER/pip-cache}"

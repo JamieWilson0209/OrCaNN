@@ -39,6 +39,26 @@ bash hpc/setup.sh all       # main env AND caiman env
 bash hpc/setup.sh caiman    # just the caiman env (if the main one already exists)
 ```
 
+### If conda fails with "An unexpected error has occurred"
+
+The traceback ends in `OSError: [Errno 122] Disk quota exceeded` and conda
+suggests disabling plugins. Ignore that suggestion: the real cause is a full
+**home** directory. The cluster's base package cache is read only, so conda
+falls back to `~/.conda/pkgs`, and a caiman solve writes roughly 200 MB of
+conda-forge repodata before downloading a single package.
+
+`hpc/config.sh` now points `CONDA_PKGS_DIRS`, `CONDA_ENVS_DIRS` and
+`PIP_CACHE_DIR` at scratch, which prevents this on a fresh setup. If home is
+already full from an earlier run, reclaim the space once:
+
+```bash
+quota -s
+du -sh ~/.conda ~/.cache
+conda clean --all --yes
+```
+
+Then re-run `bash hpc/setup.sh all`.
+
 > Reminder: scratch is often purged after inactivity. To persist the conda envs,
 > set `ENV_PREFIX` / `CAIMAN_ENV` in `hpc/config.sh` to long-term or group
 > storage; to persist trained models, point the `models:` paths in `config.yaml`

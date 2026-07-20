@@ -36,6 +36,21 @@ case "${TARGET}" in
        exit 2 ;;
 esac
 
+# Caches live on scratch (see config.sh). Create them before conda runs: if the
+# conda package cache falls back to a quota-limited home directory, the solve
+# dies while writing repodata with a long, misleading "unexpected error" report.
+mkdir -p "${CONDA_PKGS_DIRS}" "${CONDA_ENVS_DIRS}" "${PIP_CACHE_DIR}"
+
+# Preflight: a full home directory breaks conda in ways its own error message
+# does not explain. Fail here with something actionable instead.
+if ! touch "${HOME}/.orcann_quota_probe" 2>/dev/null; then
+    echo "ERROR: cannot write to \$HOME (${HOME}). Your home quota is likely full." >&2
+    echo "  Check usage:  quota -s ; du -sh ~/.conda ~/.cache" >&2
+    echo "  Reclaim:      conda clean --all --yes" >&2
+    exit 1
+fi
+rm -f "${HOME}/.orcann_quota_probe"
+
 . /etc/profile.d/modules.sh
 module load "${ANACONDA_MODULE}"
 
@@ -62,7 +77,9 @@ setup_main() {
     python -m pip install --upgrade pip
     python -m pip install torch --index-url "https://download.pytorch.org/whl/${CUDA_BUILD}"
     python -m pip install -e "${REPO_ROOT}"
-    python -c "import torch, orcann; print('  main env ready | torch', torch.__version__, '| cuda', torch.cuda.is_available())"
+    # cuda False is EXPECTED on a login node (no GPU is attached there). Verify
+    # the CUDA build on a GPU node with jobs/check_gpu.sh.
+    python -c "import torch, orcann; print('  main env ready | torch', torch.__version__, '| cuda visible here:', torch.cuda.is_available(), '(False is normal on a login node)')"
 }
 
 setup_caiman() {
