@@ -6,6 +6,9 @@
 # and writes results/analysis. CPU work. Submit AFTER activity has run
 # for every recording:
 #   qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh
+#
+# Normally submitted for you by hpc/run_chain.sh, which holds it behind the
+# activity array and passes EXPECTED_N so a shortfall gets reported.
 # =============================================================================
 #$ -N orcann_analysis
 #$ -cwd
@@ -24,5 +27,37 @@ set +u; source activate "${ENV_PREFIX}"; set -u
 CONFIG="${CONFIG:-config.yaml}"
 SETARGS=(--config "${CONFIG}")
 for kv in ${SET:-}; do SETARGS+=(--set "${kv}"); done
+
+# When launched by hpc/run_chain.sh, EXPECTED_N is the recording count taken at
+# launch. Upstream array tasks that fail exit without writing their output, and
+# the later stages simply list a shorter directory, so a shortfall is otherwise
+# silent. This is the one place in the chain that sees every stage's result, so
+# report it here before the analysis itself runs.
+if [ -n "${EXPECTED_N:-}" ]; then
+    python - "${CONFIG}" "${EXPECTED_N}" <<'PY' || true
+import os, sys
+from orcann.configLoader import Config
+from orcann.pipeline.cli import list_infer_recordings
+
+cfg = Config.load(sys.argv[1]).resolve_paths()
+expected_n = int(sys.argv[2])
+
+wanted = list_infer_recordings(cfg.paths.infer)
+act = cfg.paths.activity
+got = set(os.listdir(act)) if os.path.isdir(act) else set()
+got = {d for d in got
+       if os.path.isfile(os.path.join(act, d, "data", "temporal_traces.npy"))}
+
+if len(got) < expected_n:
+    missing = [r for r in wanted if r not in got]
+    print(f"WARNING: expected {expected_n} recording(s), found {len(got)}.")
+    if missing:
+        print("WARNING: no activity output for: " + ", ".join(missing))
+    print("WARNING: check the segment/activity logs for these; "
+          "analysis continues on what is present.")
+else:
+    print(f"all {len(got)} recording(s) present.")
+PY
+fi
 
 orcann analysis "${SETARGS[@]}"
