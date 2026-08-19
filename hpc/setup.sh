@@ -4,10 +4,16 @@
 # conda env(s) OrCaNN needs. Run from anywhere on a login node (installs are fine
 # there; never train on the login node):
 #
-#     bash hpc/setup.sh            # main torch + orcann env (always needed)
-#     bash hpc/setup.sh all        # also build the caiman env (motion correction)
+#     bash hpc/setup.sh            # BOTH envs (the default; this is what you want)
+#     bash hpc/setup.sh main       # only the torch env
 #     bash hpc/setup.sh caiman     # only the caiman env
 #     bash hpc/setup.sh doctor     # diagnose only: caches, quota, env health
+#
+# The default builds BOTH because the caiman env is not optional for a normal
+# run: it carries motion_correction AND activity (OASIS deconvolution is
+# CaImAn's constrained_foopsi). Building only the torch env leaves a setup that
+# looks complete and then fails at the first stage: activity now refuses to run
+# OASIS without CaImAn rather than silently substituting another detector.
 #
 # Targets:
 #   main    ENV_PREFIX  : python 3.11 + CUDA torch + `pip install -e .` (orcann).
@@ -16,8 +22,8 @@
 #                         orcann (editable, --no-deps, for the `orcann` command).
 #                         Used ONLY by `orcann motion_correction`. Kept separate
 #                         so caiman's large pinned stack never constrains the
-#                         torch env. Optional: skip it unless you motion-correct
-#                         raw recordings.
+#                         torch env. REQUIRED for motion_correction and activity;
+#                         skip it only if you are running neither.
 #   all     both of the above.
 #
 # Env locations, module names and the torch CUDA build all come from
@@ -30,10 +36,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/.." && pwd)"   # the repo root (this is the workspace)
 source "${HERE}/config.sh"
 
-TARGET="${1:-main}"
+TARGET="${1:-all}"
 case "${TARGET}" in
     main|caiman|all|doctor) ;;
-    *) echo "usage: bash hpc/setup.sh [main|caiman|all|doctor]   (default: main)" >&2
+    *) echo "usage: bash hpc/setup.sh [all|main|caiman|doctor]   (default: all)" >&2
        exit 2 ;;
 esac
 
@@ -293,5 +299,29 @@ fi
 if [ "${TARGET}" = "caiman" ] || [ "${TARGET}" = "all" ]; then
     setup_caiman
 fi
+
+# Closing summary. The failure this prevents: a setup that reports success
+# having built one env, followed hours later by a queued job dying on the other.
+# Stage-to-env mapping is stated explicitly because it is not guessable — OASIS
+# deconvolution lives in CaImAn, so `activity` needs the caiman env even though
+# nothing about it looks like motion correction.
+echo
+echo "=== environments ==="
+for spec in "main:${ENV_PREFIX}:infer, segment, analysis, train_spatial, train_temporal" \
+            "caiman:${CAIMAN_ENV}:motion_correction, activity"; do
+    name="${spec%%:*}"; rest="${spec#*:}"
+    prefix="${rest%%:*}"; stages="${rest#*:}"
+    if env_ok "${prefix}"; then
+        echo "  [ok]      ${name} env  -> ${stages}"
+    elif [ -d "${prefix}" ]; then
+        echo "  [BROKEN]  ${name} env  -> ${stages}"
+        echo "            ${prefix} exists but its interpreter does not run;"
+        echo "            rm -rf '${prefix}' && bash hpc/setup.sh ${name}"
+    else
+        echo "  [MISSING] ${name} env  -> ${stages}"
+        echo "            these stages will fail until: bash hpc/setup.sh ${name}"
+    fi
+done
+echo
 
 echo "Done (${TARGET})."

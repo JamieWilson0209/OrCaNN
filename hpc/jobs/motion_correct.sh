@@ -19,13 +19,7 @@ source hpc/config.sh
 . /etc/profile.d/modules.sh
 module load "${ANACONDA_MODULE}"
 
-if [ ! -d "${CAIMAN_ENV}" ]; then
-    echo "ERROR: caiman env not found: ${CAIMAN_ENV}"
-    echo "  Create it once with: bash hpc/setup.sh caiman"
-    echo "  (or point CAIMAN_ENV=/abs/path/to/an/existing/caiman/env via qsub -v)"
-    exit 1
-fi
-set +u; source activate "${CAIMAN_ENV}"; set -u
+orcann_activate_env "${CAIMAN_ENV}" caiman
 
 CONFIG="${CONFIG:-config.yaml}"
 echo "motion_correct task ${SGE_TASK_ID}: $(date)"

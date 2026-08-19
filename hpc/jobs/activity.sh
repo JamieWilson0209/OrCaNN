@@ -10,10 +10,11 @@
 # OASIS is CaImAn's deconvolution, so this stage runs in the CAIMAN env (the same
 # env motion correction uses), NOT the torch env. It is torch-free: baseline,
 # OASIS, and the HTML gallery need only caiman's numpy/scipy/scikit-image/
-# matplotlib stack plus pillow. If run in an env without caiman (e.g. the one-job
-# run_pipeline path in the torch env), OASIS import fails and deconvolution falls
-# back to the dependency-free `threshold` method with a warning - no crash. Set
-# deconvolution.method=threshold to skip OASIS entirely.
+# matplotlib stack plus pillow. Running this stage in an env WITHOUT caiman is a
+# hard error when deconvolution.method='oasis': OASIS is CaImAn's
+# constrained_foopsi, and silently substituting another detector would change the
+# results while still reporting success. Set deconvolution.method='robust' (or
+# 'threshold') to run without caiman deliberately.
 # =============================================================================
 #$ -N orcann_activity
 #$ -cwd
@@ -27,7 +28,7 @@ set -euo pipefail
 source hpc/config.sh
 . /etc/profile.d/modules.sh
 module load "${ANACONDA_MODULE}"
-set +u; source activate "${CAIMAN_ENV}"; set -u
+orcann_activate_env "${CAIMAN_ENV}" caiman
 
 CONFIG="${CONFIG:-config.yaml}"
 echo "activity task ${SGE_TASK_ID}: $(date)"

@@ -20,7 +20,7 @@ source hpc/config.sh
 . /etc/profile.d/modules.sh
 module load "${ANACONDA_MODULE}"
 module load "${CUDA_MODULE}" 2>/dev/null || echo "note: '${CUDA_MODULE}' unavailable; using torch's bundled CUDA"
-set +u; source activate "${ENV_PREFIX}"; set -u
+orcann_activate_env "${ENV_PREFIX}" main
 
 CONFIG="${CONFIG:-config.yaml}"
 SETARGS=(--config "${CONFIG}")

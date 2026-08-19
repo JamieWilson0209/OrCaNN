@@ -22,22 +22,40 @@ group/long-term storage.
 cd /path/to/OrCaNN
 
 source hpc/config.sh     # edit conda-env / module names first if needed
-bash   hpc/setup.sh      # main env: conda + torch + `pip install -e .`
+bash   hpc/setup.sh      # BOTH envs (default) — see the stage/env split below
 ```
 
 `hpc/setup.sh` builds the conda env(s) and prints a per-env import check at the
 end. Installs run fine on a login node; **never train on the login node** —
 always `qsub`.
 
-Motion correction is optional and runs in a **separate** caiman env (it is never
-needed for training or segmentation). Only if you intend to motion-correct raw
-recordings, build that env too — the same script handles it, and it does not
-touch the main env:
+OrCaNN needs **two** conda envs, and which stage runs where is not guessable:
+
+| env | stages |
+|---|---|
+| `ENV_PREFIX` (torch) | `infer`, `segment`, `analysis`, `train_spatial`, `train_temporal` |
+| `CAIMAN_ENV` | `motion_correction`, `activity` |
+
+`activity` is in the caiman env because OASIS deconvolution *is* CaImAn's
+`constrained_foopsi`. So the caiman env is not an optional extra for people who
+motion-correct — every run that produces spike trains needs it. `bash
+hpc/setup.sh` builds both by default and prints which are usable when it
+finishes. To build just one:
 
 ```bash
-bash hpc/setup.sh all       # main env AND caiman env
-bash hpc/setup.sh caiman    # just the caiman env (if the main one already exists)
+bash hpc/setup.sh main      # torch env only
+bash hpc/setup.sh caiman    # caiman env only
 ```
+
+> Building only the torch env leaves a setup that looks complete and then fails
+> at the first stage. Until recently it could be worse than a failure: with
+> caiman absent the OASIS import raised inside a `try`, so deconvolution fell
+> back to the threshold method and the run completed with different numbers.
+> `activity` now refuses to run OASIS without CaImAn. **Results produced before
+> that change are not self-describing** — `run_info.json` records the
+> *configured* method, not the one that ran — so check those job logs for
+> `OASIS failed:` / `Falling back to threshold deconvolution` before trusting
+> them.
 
 ### If conda fails with "An unexpected error has occurred"
 
@@ -180,21 +198,22 @@ qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh    # torch env, CPU: results/act
 # training (not per-recording; submit directly)
 qsub hpc/jobs/train_spatial.sh                     # GPU; spatial segmenter
 
-# single recording / quick end-to-end in one job (not an array)
-qsub -v CONFIG=config.yaml hpc/jobs/run_pipeline.sh
+# chained submission (segment -> activity -> analysis, via -hold_jid)
+bash hpc/run_chain.sh --config config.yaml
 ```
 
 `activity` runs in the **caiman env** (OASIS is CaImAn's `constrained_foopsi`),
-the same env as motion correction; every other stage runs in the torch env. If
-`activity` ever runs without caiman on the path, deconvolution falls back to the
-dependency-free `threshold` method with a warning rather than failing.
+the same env as motion correction; every other stage runs in the torch env.
+Running `activity` without caiman on the path is a hard error when
+`deconvolution.method='oasis'` — it used to fall back to the `threshold` method
+with only a warning, which changed the results while still reporting success.
 
 **Order matters between arrays.** Each stage indexes the previous stage's outputs,
 so run them in order (`motion_correct -> infer -> segment -> activity`),
 waiting for each array to finish before submitting the next — otherwise some tasks
 would index a dir still being written. The arrays are separate submissions for
-exactly this reason; `run_pipeline` chains them in one serial job instead (which
-is why it is not itself arrayed).
+exactly this reason; `hpc/run_chain.sh` submits them as a dependency chain
+(`-hold_jid`) so the ordering is enforced by the scheduler rather than by you.
 
 **Inference is split from segmentation on purpose.** `infer` runs the GPU model
 once and caches the probability map; `segment` (CPU, no model) thresholds and
@@ -228,7 +247,7 @@ overrides. `infer` requests GPU (`-q gpu -l gpu=1`) for the segmenter and
 auto-detects the device; `segment`, `activity`, and `analysis` are CPU-only. All
 paths, the model, and tuning come from `config.yaml` (the `paths`, `models`,
 `spatial`, `imaging`, `baseline`, `deconvolution`, and `analysis` sections; see
-the commented file from `orcann run_pipeline --dump-config`).
+the commented file from `orcann segment --dump-config`).
 
 If your job needs an L40S instead of an A100, change `-l a100=true` to
 `-l l40s=true`; for a fast-scheduling test slice use `-l gpu-mig=1` (a 20 GB MIG

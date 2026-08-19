@@ -18,7 +18,7 @@ set -euo pipefail
 source hpc/config.sh
 . /etc/profile.d/modules.sh
 module load "${ANACONDA_MODULE}"
-set +u; source activate "${ENV_PREFIX}"; set -u
+orcann_activate_env "${ENV_PREFIX}" main
 
 CONFIG="${CONFIG:-config.yaml}"
 echo "detect_transients task ${SGE_TASK_ID}: $(date)"

@@ -42,6 +42,39 @@ export CUDA_BUILD="${CUDA_BUILD:-cu121}"
 # Keep ~/.local user-site packages from leaking into the prefix env.
 export PYTHONNOUSERSITE=1
 
+# Env activation with a real usability check, used by every job script.
+#
+# "The directory exists" is not "the env works". A scratch purge deletes files by
+# age from *inside* a tree, so a purged env keeps its directory and loses its
+# interpreter. A `[ -d ]` guard passes, `source activate` then fails with
+#     EnvironmentLocationNotFound: Not a conda environment: <prefix>
+# and the job dies before running anything — with the real cause (the purge)
+# nowhere in the message. Test the interpreter instead, and say what to do.
+orcann_env_ok() {
+    [ -x "$1/bin/python" ] && "$1/bin/python" -c "import sys" >/dev/null 2>&1
+}
+
+orcann_activate_env() {
+    local prefix="$1" target="${2:-main}"
+    if [ ! -d "${prefix}" ]; then
+        echo "ERROR: conda env not found: ${prefix}" >&2
+        echo "  Build it on a login node:  bash hpc/setup.sh ${target}" >&2
+        exit 1
+    fi
+    if ! orcann_env_ok "${prefix}"; then
+        echo "ERROR: ${prefix} exists but its interpreter does not run." >&2
+        echo "  A scratch purge removing files from inside the env does this." >&2
+        echo "  Delete the broken tree and rebuild on a login node:" >&2
+        echo "    rm -rf '${prefix}' && bash hpc/setup.sh ${target}" >&2
+        exit 1
+    fi
+    # Some activation hooks (caiman's Intel-MPI mpivars.activate.sh) reference
+    # unbound variables, so nounset must be off across the source itself.
+    set +u
+    source activate "${prefix}"
+    set -u
+}
+
 # CRLF-safe submission, used by submit.sh and run_chain.sh. A Windows checkout
 # (git's default core.autocrlf=true) leaves every line ending in \r, and SGE
 # spools the job file verbatim — the job then dies on the node with
