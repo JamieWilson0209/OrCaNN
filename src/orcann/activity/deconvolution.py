@@ -119,6 +119,11 @@ def deconvolve_traces(
         prioritises catching obvious transients and rejecting noise, and never
         fails the way OASIS can).  On the 'oasis' path a robust safety net
         backfills any obvious transient OASIS missed unless disabled.
+
+        'oasis' raises RuntimeError if CaImAn is not importable: a solver
+        failure on a trace falls back to the threshold method, but a missing
+        dependency does not, because that would silently change the detection
+        method for the whole recording.
     penalty : float
         Sparsity penalty (L1). 0 = auto-tune (recommended for OASIS).
     optimize_g : bool
@@ -161,6 +166,26 @@ def deconvolve_traces(
                 f"median={np.median(C_dff):.4f}")
 
     if method == 'oasis':
+        # OASIS *is* CaImAn's constrained_foopsi, so this method cannot run
+        # without it. Checked up front, and never swallowed by the fallback
+        # below: an absent dependency is a configuration error, not a numerical
+        # one, and silently substituting a different detection method would
+        # change the results while the run still reported success. This is
+        # exactly what used to happen when the activity stage was run in the
+        # torch env instead of the caiman env.
+        try:
+            from caiman.source_extraction.cnmf.deconvolution import (  # noqa: F401
+                constrained_foopsi)
+        except ImportError as e:
+            raise RuntimeError(
+                "deconvolution.method='oasis' requires CaImAn, which is not "
+                f"importable in this environment ({e}). OASIS is CaImAn's "
+                "constrained_foopsi, so there is no OASIS without it.\n"
+                "  Run the activity stage in the caiman env (hpc/jobs/activity.sh "
+                "uses CAIMAN_ENV; build it with `bash hpc/setup.sh caiman`), or "
+                "set deconvolution.method='robust' to use the deterministic "
+                "detector, which needs no CaImAn.") from e
+
         try:
             result = _deconvolve_oasis(
                 C_dff, frame_rate, decay_time,
@@ -168,6 +193,10 @@ def deconvolve_traces(
                 noise_method=noise_method,
                 s_min=s_min, noise_gate_sigma=noise_gate_sigma,
             )
+        except ImportError:
+            # A CaImAn submodule failing to load later is the same class of
+            # problem as it being absent — do not degrade to another method.
+            raise
         except Exception as e:
             logger.warning(f"OASIS failed: {e}")
             logger.info("Falling back to threshold deconvolution")
