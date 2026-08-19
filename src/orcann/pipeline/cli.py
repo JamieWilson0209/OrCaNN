@@ -1,6 +1,5 @@
 """The single `orcann` entry point: subcommands that each read the YAML config.
 
-    orcann run_pipeline      --config config.yaml
     orcann motion_correction --config config.yaml [--force] [--task-id N]
     orcann infer             --config config.yaml [--force] [--task-id N]
     orcann segment           --config config.yaml [--force] [--task-id N] [--sweep k=v1,v2]
@@ -79,13 +78,6 @@ def build_parser():
         prog="orcann", description="OrCaNN calcium-imaging pipeline (config-driven).")
     sub = ap.add_subparsers(dest="stage", required=True, metavar="<stage>")
 
-    p = sub.add_parser("run_pipeline",
-                       help="motion correction -> infer -> segment -> activity")
-    _common(p)
-    p.add_argument("--force", action="store_true", help="redo stages even if outputs exist")
-    p.add_argument("--task-id", type=int, default=None,
-                   help="process only the Nth recording (SGE array)")
-
     for name, helptext in [
             ("motion_correction", "data/raw -> data/pre_processed (caiman env)"),
             ("infer", "pre_processed -> results/infer (GPU; cache prob maps)"),
@@ -135,10 +127,7 @@ def main(argv=None):
     if cfg is None:
         return
 
-    if a.stage == "run_pipeline":
-        from orcann.pipeline import run_pipeline
-        run_pipeline.run(cfg, task_id=a.task_id, force=a.force)
-    elif a.stage == "motion_correction":
+    if a.stage == "motion_correction":
         from orcann.pipeline import run_motion_correction
         run_motion_correction.run(cfg, task_id=a.task_id, force=a.force)
     elif a.stage == "infer":

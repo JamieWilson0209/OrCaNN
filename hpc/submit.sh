@@ -18,7 +18,6 @@
 # variable directly (see hpc/jobs/segment.sh); submit.sh runs the real extract.
 #
 # Not handled here (these are not per-recording, submit them directly):
-#   qsub -v CONFIG=config.yaml hpc/jobs/run_pipeline.sh     # all recordings, one job
 #   qsub -v CONFIG=config.yaml hpc/jobs/train_spatial.sh    # trains one model
 #   qsub -v CONFIG=config.yaml hpc/jobs/train_temporal.sh
 # =============================================================================
@@ -34,7 +33,8 @@ CONFIG="${2:-config.yaml}"
 case "${STAGE}" in
     motion_correct|infer|segment|activity) ;;
     *) echo "unknown stage '${STAGE}'. Use: motion_correct | infer | segment | activity" >&2
-       echo "(run_pipeline and train_* are not per-recording arrays; qsub them directly.)" >&2
+       echo "(train_* are not per-recording arrays; qsub them directly. For a full" >&2
+        echo " chained run use: bash hpc/run_chain.sh)" >&2
        exit 2 ;;
 esac
 [ -f "${CONFIG}" ] || { echo "config not found: ${CONFIG}" >&2; exit 2; }

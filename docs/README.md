@@ -91,7 +91,7 @@ Everything (paths, model, tuning) lives in one YAML file. Generate a commented
 starting point and edit it:
 
 ```bash
-orcann run_pipeline --dump-config config.yaml
+orcann segment --dump-config config.yaml
 ```
 
 The sections you will touch most: `imaging` (frame rate and indicator, which sets
@@ -140,7 +140,7 @@ CONFIG=config.yaml hpc/jobs/analysis.sh`.
 infer -> segment -> activity in one serial job (analysis is still separate):
 
 ```bash
-qsub -v CONFIG=config.yaml hpc/jobs/run_pipeline.sh
+bash hpc/run_chain.sh --config config.yaml
 ```
 
 This job runs in the torch env, so its `activity` step uses the threshold
@@ -250,7 +250,6 @@ python scripts/check_annotation.py --movie rec.nd2 --annotation RoiSet.zip --out
 Every subcommand also runs without a cluster:
 
 ```bash
-orcann run_pipeline --config config.yaml            # full chain locally (through activity)
 orcann segment --config config.yaml --set spatial.threshold=0.55   # one-off override
 orcann activity --config config.yaml --set deconvolution.method=threshold  # no caiman
 orcann analysis --config config.yaml                # group analysis, after activity

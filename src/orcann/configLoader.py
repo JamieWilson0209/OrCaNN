@@ -136,6 +136,7 @@ class AnalysisParams:
     drift_threshold: float = 1.0          # QC: baseline drift tolerated per recording
     roi_peak_figures: bool = False        # also render per-ROI peak montages (slow)
     inactive_file: Optional[str] = None   # text file of recording ids to mark inactive (one per line)
+    dev: bool = False                     # run orcann.dev analyses (unsupported, may change)
 
 
 @dataclass
@@ -266,7 +267,7 @@ class Config:
     def _to_commented_yaml(self) -> str:
         lines = [
             "# OrCaNN configuration - the single source of truth for a run.",
-            "# Edit values and run, e.g.:  orcann run_pipeline --config config.yaml",
+            "# Edit values and run, e.g.:  orcann segment --config config.yaml",
             "# Paths are relative to THIS file's directory (the workspace root), so the",
             "# repo works wherever it is extracted; an absolute path is used as-is.",
             "# null = unset / use the default; lists use [a, b].",
@@ -402,4 +403,5 @@ _FIELD_DOC = {
     "analysis.drift_threshold": "QC: baseline drift tolerated per recording",
     "analysis.roi_peak_figures": "also render per-ROI peak montages (slow)",
     "analysis.inactive_file": "text file of recording ids to mark inactive (one per line)",
+    "analysis.dev": "run the unsupported orcann.dev analyses (off by default)",
 }

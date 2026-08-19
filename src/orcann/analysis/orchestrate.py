@@ -60,6 +60,9 @@ def run_analysis(
     min_roi_distance: float = 15.0,
     roi_peak_figures: bool = False,
     mutant_label: str = 'CEP41 R242H',
+    dev: bool = False,
+    deconv_method: str = 'oasis',
+    robust_k_onset: float = 3.0,
 ) -> Dict[str, Any]:
     """
     Run full analysis on batch results.
@@ -365,6 +368,21 @@ def run_analysis(
     except Exception as e:
         logger.error(f"Genotype comparison failed: {e}")
         import traceback; logger.error(traceback.format_exc())
+
+    # ── Dev analyses (opt-in via analysis.dev; unsupported) ──────────────
+    # Isolated like every other optional block: an experiment in orcann.dev must
+    # never cost the run its real results. Runs after `results` exists so its
+    # summary can be recorded there.
+    if dev:
+        try:
+            from orcann.dev import run_transient_decay
+            results['dev_transient_decay'] = run_transient_decay(
+                datasets, output_dir, deconv_method=deconv_method,
+                k_onset=robust_k_onset,
+                frame_rate=frame_rate_override or 2.0,
+                mutant_label=mutant_label)
+        except Exception as e:
+            logger.warning(f"dev transient decay failed: {e}")
 
     # ── Activity analysis ────────────────────────────────────────────────
     try:

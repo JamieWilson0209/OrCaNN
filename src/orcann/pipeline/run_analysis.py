@@ -46,6 +46,12 @@ def run(cfg, force=False):
         min_roi_distance=ap.min_roi_distance,
         roi_peak_figures=ap.roi_peak_figures,
         mutant_label=ap.mutant_label,
+        # analysis.dev gates orcann.dev; the deconvolution settings ride along
+        # because the dev transient-decay measurement only means anything on the
+        # robust detector's own onset threshold (it refuses to run otherwise).
+        dev=ap.dev,
+        deconv_method=cfg.deconvolution.method,
+        robust_k_onset=cfg.deconvolution.robust_k_onset,
     )
     if results:
         print(f"analysis outputs -> {out}/  ({results.get('n_datasets', '?')} datasets)")

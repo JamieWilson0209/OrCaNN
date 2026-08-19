@@ -54,13 +54,24 @@ env/
 *.po[0-9]*
 *.pe[0-9]*
 
-# --- Local working notes (not shared) ---
+# --- Local working notes and unverified code (not shared) ---
 # dev/ holds design notes and scratch investigations that belong to whoever is
 # working on the machine, not to the project: half-finished port plans, salvaged
 # code paths, notes that point at files outside the repo. Keeping it ignored
 # means it never has to be tidied before a commit. Anything in here that becomes
 # a real design document should move into docs/ and be committed there.
 /dev/
+
+# src/orcann/dev/ is the code counterpart: analyses gated behind `analysis.dev`
+# whose method is still being decided, held back until they have been checked
+# against real recordings. The flag defaults to false and the call site is
+# wrapped, so a checkout without this package behaves exactly as if the flag did
+# not exist. Drop this rule when an analysis graduates — or better, move it into
+# orcann.analysis / orcann.figures and lose the flag with it.
+src/orcann/dev/
+
+# Tool caches that land in the repo root (matplotlib font cache, etc.)
+.cache/
 
 # --- OS / editor cruft ---
 .DS_Store
