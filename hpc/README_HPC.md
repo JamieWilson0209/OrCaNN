@@ -59,6 +59,93 @@ conda clean --all --yes
 
 Then re-run `bash hpc/setup.sh all`.
 
+`hpc/config.sh` also redirects `TMPDIR` and `XDG_CACHE_HOME`, and sets
+`CONDA_REGISTER_ENVS=false`. That last one matters more than it looks: `conda
+create --prefix` registers the new env in `~/.conda/environments.txt`, a
+hardcoded path that `CONDA_ENVS_DIRS` does not move, and `register_env()`
+warns-and-continues only for `EACCES/EROFS/ENOENT` while re-raising anything
+else — a full quota is `EDQUOT` (errno 122), so the create fails outright. With
+it off, setup writes **nothing** to home, and a full home no longer blocks an
+install at all.
+
+### `JSONDecodeError` from conda, after a quota failure
+
+```
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+  ... conda/notices/cache.py, line 100, in get_notice_response_from_cache
+```
+
+A quota failure leaves damage behind. Conda keeps its channel-notices cache in
+`~/.cache/conda/notices`, outside `pkgs_dirs`, and a write truncated by a full
+quota leaves a 0-byte file there. Every later `conda` call then dies reading it.
+This is not a plugin problem, so `--no-plugins` does not help.
+
+`bash hpc/setup.sh` deletes empty or unparseable notices files during preflight,
+and `CONDA_NUMBER_CHANNEL_NOTICES=0` in `hpc/config.sh` stops them being written
+at all. To clear it by hand:
+
+```bash
+python -c "from conda.notices.cache import get_notices_cache_dir; print(get_notices_cache_dir())"
+rm -rf ~/.cache/conda     # pure cache; conda rebuilds it
+conda config --set number_channel_notices 0
+```
+
+### Scratch purge left a half-empty env
+
+Purges delete files by age from *inside* a tree, so an env can keep its directory
+and lose its interpreter. Setup used to skip creation in that state (the
+directory existed) and fail much later inside pip. It now tests the interpreter
+and stops with:
+
+```
+ERROR: the main env at <prefix> exists but its interpreter does not run.
+```
+
+The script never deletes an env itself; clear it and re-run:
+
+```bash
+rm -rf /exports/eddie/scratch/$USER/conda/envs/calcineps
+bash hpc/setup.sh
+```
+
+### Windows line endings (`pipefail` errors)
+
+```
+hpc/setup.sh: line 26: set: pipefail: invalid option name
+```
+
+or, via a shebang, `bad interpreter: /bin/bash^M`. The repository stores LF, but
+Git for Windows defaults to `core.autocrlf=true` and rewrites every line ending
+to CRLF **on checkout**; those bytes reach the cluster unchanged.
+
+`.gitattributes` (`* text=auto eol=lf`) fixes this at the source, but only for
+clones made after it was committed. Two runtime guards catch the rest:
+
+- `bash hpc/setup.sh` strips CR from `hpc/*.sh` and `hpc/jobs/*.sh` in preflight.
+- `hpc/submit.sh` and `hpc/run_chain.sh` submit a CR-stripped copy of the job
+  script, so a Windows checkout cannot queue a job that dies on the node.
+
+Neither can rescue *itself*: a script with CRLF fails while bash is still parsing
+it. If `hpc/setup.sh` is the broken file, bootstrap by typing the fix at the
+shell:
+
+```bash
+sed -i 's/\r$//' hpc/*.sh hpc/jobs/*.sh
+```
+
+On Windows, also `git config --global core.autocrlf false`.
+
+### Diagnosing
+
+```bash
+bash hpc/setup.sh doctor
+```
+
+Installs nothing. Prints where every cache resolves, whether notices and env
+registration are disabled, whether `$HOME` is writable, the quota if the cluster
+reports one, and whether each env is `ok` / `ABSENT` / `BROKEN`. Run this first
+when a job reports an environment problem.
+
 > Reminder: scratch is often purged after inactivity. To persist the conda envs,
 > set `ENV_PREFIX` / `CAIMAN_ENV` in `hpc/config.sh` to long-term or group
 > storage; to persist trained models, point the `models:` paths in `config.yaml`

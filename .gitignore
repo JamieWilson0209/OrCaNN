@@ -1,0 +1,76 @@
+# =============================================================================
+# OrCaNN .gitignore
+#
+# Design note: the data/, models/ and results/ trees are kept in git through
+# small `*_<ext>.txt` placeholder files that document what belongs in each
+# location. The heavy artefacts themselves (raw recordings, masks, trained
+# weights, output arrays) live on the cluster / external storage and are NOT
+# committed, so their binary extensions are ignored below. The placeholders are
+# plain .txt and stay tracked, preserving the directory layout.
+# =============================================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+.tox/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+.env
+
+# --- Heavy data / model / output artefacts (kept off git; see .txt placeholders) ---
+*.nd2
+*.tif
+*.tiff
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.zip
+*.mp4
+*.avi
+
+# --- SGE / Grid Engine job logs (real cluster run output) ---
+*.o[0-9]*
+*.e[0-9]*
+*.po[0-9]*
+*.pe[0-9]*
+
+# --- Local working notes (not shared) ---
+# dev/ holds design notes and scratch investigations that belong to whoever is
+# working on the machine, not to the project: half-finished port plans, salvaged
+# code paths, notes that point at files outside the repo. Keeping it ignored
+# means it never has to be tidied before a commit. Anything in here that becomes
+# a real design document should move into docs/ and be committed there.
+/dev/
+
+# --- OS / editor cruft ---
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

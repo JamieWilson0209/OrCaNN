@@ -7,6 +7,7 @@
 #     bash hpc/setup.sh            # main torch + orcann env (always needed)
 #     bash hpc/setup.sh all        # also build the caiman env (motion correction)
 #     bash hpc/setup.sh caiman     # only the caiman env
+#     bash hpc/setup.sh doctor     # diagnose only: caches, quota, env health
 #
 # Targets:
 #   main    ENV_PREFIX  : python 3.11 + CUDA torch + `pip install -e .` (orcann).
@@ -31,28 +32,168 @@ source "${HERE}/config.sh"
 
 TARGET="${1:-main}"
 case "${TARGET}" in
-    main|caiman|all) ;;
-    *) echo "usage: bash hpc/setup.sh [main|caiman|all]   (default: main)" >&2
+    main|caiman|all|doctor) ;;
+    *) echo "usage: bash hpc/setup.sh [main|caiman|all|doctor]   (default: main)" >&2
        exit 2 ;;
 esac
+
+. /etc/profile.d/modules.sh
+module load "${ANACONDA_MODULE}"
+
+# =============================================================================
+# PREFLIGHT — every install failure seen on this cluster so far has been an
+# environment problem, not a package problem: a cache conda wrote to home anyway,
+# a Windows checkout, or a scratch purge that emptied an env in place. Each check
+# below exists because one of those actually happened. All are cheap; all run
+# before any solve, so a failure costs seconds rather than dying deep in conda.
+#
+# Note what is deliberately NOT here any more: a probe that home is writable.
+# With the caches, TMPDIR and env registration (CONDA_REGISTER_ENVS) all
+# redirected in config.sh, setup writes nothing to home, so a full home quota no
+# longer breaks an install and must not be allowed to fail one. `doctor` still
+# reports it, because it stays useful context when something else misbehaves.
+# =============================================================================
+
+# conda keeps channel notices in <XDG_CACHE_HOME>/conda/notices, which is NOT
+# under pkgs_dirs, so relocating the package cache does not move it. A write
+# truncated by a full quota leaves a 0-byte file there, and every later conda
+# call dies reading it back:
+#     json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+# Notices are core rather than a plugin, so --no-plugins does not help. Delete
+# any empty or unparseable file; conda refetches on demand. The legacy ~/.cache
+# path is swept too, since that is where the damage lands when XDG_CACHE_HOME was
+# not yet set — i.e. exactly the runs that caused it.
+clean_notices_cache() {
+    local dir file removed=0
+    for dir in "${XDG_CACHE_HOME}/conda/notices" "${HOME}/.cache/conda/notices"; do
+        [ -d "${dir}" ] || continue
+        for file in "${dir}"/*; do
+            [ -f "${file}" ] || continue
+            if [ ! -s "${file}" ] || ! python -c \
+                 "import json,sys; json.load(open(sys.argv[1]))" "${file}" >/dev/null 2>&1; then
+                rm -f "${file}"
+                removed=$((removed + 1))
+            fi
+        done
+    done
+    if [ "${removed}" -gt 0 ]; then
+        echo "  cleared ${removed} corrupt conda notices cache file(s)"
+    fi
+    return 0
+}
+
+# A Windows checkout with git's default core.autocrlf=true rewrites every LF to
+# CRLF, and those files reach the cluster byte-for-byte over rsync/scp. bash then
+# reads `set -euo pipefail\r` and rejects `pipefail<CR>` as an invalid option
+# name. The repo's .gitattributes prevents this at checkout — but only for clones
+# made after it was committed, so strip any CR that is here regardless.
+# Idempotent, and a no-op on a clean clone.
+#
+# `tr` output is copied back with `cat` rather than `mv` so the file keeps its
+# inode and its executable bit.
+strip_crlf_scripts() {
+    local file tmp fixed=0
+    for file in "${REPO_ROOT}"/hpc/*.sh "${REPO_ROOT}"/hpc/jobs/*.sh; do
+        [ -f "${file}" ] || continue
+        grep -q $'\r' "${file}" 2>/dev/null || continue
+        tmp="$(mktemp)"
+        if tr -d '\r' < "${file}" > "${tmp}" && cat "${tmp}" > "${file}"; then
+            fixed=$((fixed + 1))
+        fi
+        rm -f "${tmp}"
+    done
+    if [ "${fixed}" -gt 0 ]; then
+        echo "  stripped CRLF from ${fixed} shell script(s) — this clone came from a"
+        echo "  Windows checkout; see the line-endings section of hpc/README_HPC.md"
+    fi
+    return 0
+}
+
+# "The directory exists" is not "the env works". Scratch purges delete files by
+# age from *inside* a tree, so a purged env keeps its directory and loses its
+# interpreter; a `[ ! -d ]` guard then skips creation and the failure surfaces
+# much later, as a confusing pip or import error. Test the interpreter.
+env_ok() {
+    [ -x "$1/bin/python" ] && "$1/bin/python" -c "import sys" >/dev/null 2>&1
+}
+
+# Refuse to work on a half-present env, and say exactly how to clear it. Deleting
+# is left to the operator on purpose: this script never removes an env tree.
+require_usable_env() {
+    local prefix="$1" label="$2" target="$3"
+    if [ -d "${prefix}" ] && ! env_ok "${prefix}"; then
+        echo "ERROR: the ${label} at ${prefix} exists but its interpreter does not run." >&2
+        echo "  A scratch purge removing files from inside the env does exactly this." >&2
+        echo "  Delete the broken tree and re-run (this destroys the env):" >&2
+        echo "    rm -rf '${prefix}' && bash hpc/setup.sh ${target}" >&2
+        exit 1
+    fi
+}
 
 # Caches live on scratch (see config.sh). Create them before conda runs: if the
 # conda package cache falls back to a quota-limited home directory, the solve
 # dies while writing repodata with a long, misleading "unexpected error" report.
-mkdir -p "${CONDA_PKGS_DIRS}" "${CONDA_ENVS_DIRS}" "${PIP_CACHE_DIR}"
+preflight() {
+    echo "=== preflight ==="
+    mkdir -p "${CONDA_PKGS_DIRS}" "${CONDA_ENVS_DIRS}" "${PIP_CACHE_DIR}" \
+             "${TMPDIR}" "${XDG_CACHE_HOME}"
+    echo "  pkgs cache : ${CONDA_PKGS_DIRS}"
+    echo "  envs dir   : ${CONDA_ENVS_DIRS}"
+    echo "  pip cache  : ${PIP_CACHE_DIR}"
+    echo "  xdg cache  : ${XDG_CACHE_HOME}"
+    clean_notices_cache
+    strip_crlf_scripts
+}
 
-# Preflight: a full home directory breaks conda in ways its own error message
-# does not explain. Fail here with something actionable instead.
-if ! touch "${HOME}/.orcann_quota_probe" 2>/dev/null; then
-    echo "ERROR: cannot write to \$HOME (${HOME}). Your home quota is likely full." >&2
-    echo "  Check usage:  quota -s ; du -sh ~/.conda ~/.cache" >&2
-    echo "  Reclaim:      conda clean --all --yes" >&2
-    exit 1
-fi
-rm -f "${HOME}/.orcann_quota_probe"
-
-. /etc/profile.d/modules.sh
-module load "${ANACONDA_MODULE}"
+# Diagnose without installing anything: what the caches resolve to, whether home
+# has room, and whether each env is actually usable. First thing to run when a
+# job reports an env problem.
+doctor() {
+    echo "=== doctor ==="
+    echo "  conda      : $(command -v conda || echo 'NOT FOUND')"
+    echo "  pkgs cache : ${CONDA_PKGS_DIRS}"
+    echo "  envs dir   : ${CONDA_ENVS_DIRS}"
+    echo "  pip cache  : ${PIP_CACHE_DIR}"
+    echo "  xdg cache  : ${XDG_CACHE_HOME}"
+    echo "  notices    : ${CONDA_NUMBER_CHANNEL_NOTICES} (0 = disabled)"
+    echo "  register   : ${CONDA_REGISTER_ENVS} (false = no ~/.conda write)"
+    echo "  TMPDIR     : ${TMPDIR}"
+    local prefix label
+    for prefix in "${ENV_PREFIX}" "${CAIMAN_ENV}"; do
+        if [ ! -d "${prefix}" ]; then
+            label="ABSENT (not built, or purged entirely)"
+        elif env_ok "${prefix}"; then
+            label="ok — $(${prefix}/bin/python --version 2>&1)"
+        else
+            label="BROKEN (directory present, interpreter does not run)"
+        fi
+        echo "  env        : ${prefix}"
+        echo "               ${label}"
+    done
+    if command -v quota >/dev/null 2>&1; then
+        # quota exits non-zero when the user is OVER quota, so capture first and
+        # test the text: piping straight through would print the real numbers and
+        # the "nothing reported" fallback together, in exactly the case that
+        # matters most.
+        local q
+        q="$(quota -s 2>/dev/null || true)"
+        echo "  home quota :"
+        if [ -n "${q}" ]; then
+            echo "${q}" | sed 's/^/    /'
+        else
+            echo "    (quota reported nothing)"
+        fi
+    fi
+    local probe="${HOME}/.orcann_setup_probe.$$"
+    if (echo ok > "${probe}") 2>/dev/null; then
+        rm -f "${probe}"
+        echo "  home write : ok"
+    else
+        echo "  home write : FAILING — quota full. Setup does not need home, so"
+        echo "               this will not block an install; it will break other"
+        echo "               tools. See hpc/README_HPC.md"
+    fi
+}
 
 # Some conda activation hooks (e.g. caiman's Intel-MPI mpivars.activate.sh)
 # reference unbound shell variables; `set -u` would abort the script on them.
@@ -65,8 +206,9 @@ activate() {
 
 setup_main() {
     echo "=== main env: ${ENV_PREFIX} ==="
+    require_usable_env "${ENV_PREFIX}" "main env" "main"
     mkdir -p "$(dirname "${ENV_PREFIX}")"
-    if [ ! -d "${ENV_PREFIX}" ]; then
+    if ! env_ok "${ENV_PREFIX}"; then
         conda create --yes --prefix "${ENV_PREFIX}" python=3.11
     fi
     activate "${ENV_PREFIX}"
@@ -87,8 +229,9 @@ setup_caiman() {
     # mamba resolves the caiman stack much faster than conda; use it if present.
     local solver
     solver="$(command -v mamba >/dev/null 2>&1 && echo mamba || echo conda)"
+    require_usable_env "${CAIMAN_ENV}" "caiman env" "caiman"
     mkdir -p "$(dirname "${CAIMAN_ENV}")"
-    if [ ! -d "${CAIMAN_ENV}" ]; then
+    if ! env_ok "${CAIMAN_ENV}"; then
         # one solve: conda-forge resolves caiman and a compatible stack. opencv is
         # pinned below 5 (opencv 4.x is long-tested with caiman) and libjxl is
         # named EXPLICITLY: conda-forge's opencv (4.x and 5.x alike) links
@@ -136,6 +279,13 @@ setup_caiman() {
     command -v orcann >/dev/null && echo "  orcann command: $(command -v orcann)" \
         || { echo "  ERROR: orcann not on PATH after install" >&2; exit 1; }
 }
+
+if [ "${TARGET}" = "doctor" ]; then
+    doctor
+    exit 0
+fi
+
+preflight
 
 if [ "${TARGET}" = "main" ] || [ "${TARGET}" = "all" ]; then
     setup_main

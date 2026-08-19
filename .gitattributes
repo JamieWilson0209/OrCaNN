@@ -1,0 +1,50 @@
+# =============================================================================
+# Line-ending normalisation for mixed-platform (Windows / macOS / Linux) use.
+#
+# Text files are stored with LF in the repository and checked out with LF on
+# every platform. This stops shell scripts from acquiring CRLF on a Windows
+# checkout, which otherwise turns `set -euo pipefail` into `set -euo pipefail\r`
+# and makes bash reject `pipefail<CR>` as an "invalid option name" on the HPC
+# cluster. Binary files are marked so git never rewrites or text-diffs them.
+# =============================================================================
+
+# Auto-detect text vs binary; force LF for anything detected as text.
+* text=auto eol=lf
+
+# Scripts executed by bash on the cluster: must always be LF.
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Source and config: explicitly text, LF.
+*.py    text eol=lf
+*.pyi   text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
+*.rst   text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+*.json  text eol=lf
+
+# Binary: never touch line endings, never diff as text.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.tif    binary
+*.tiff   binary
+*.nd2    binary
+*.npy    binary
+*.npz    binary
+*.pt     binary
+*.pth    binary
+*.ckpt   binary
+*.h5     binary
+*.hdf5   binary
+*.pkl    binary
+*.pickle binary
+*.zip    binary
+*.gz     binary
+*.tar    binary

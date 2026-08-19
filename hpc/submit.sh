@@ -70,5 +70,7 @@ if [ "${N}" -lt 1 ]; then
     exit 1
 fi
 
+trap 'rm -rf "${ORCANN_CRLF_TMPDIR}"' EXIT
+
 echo "submitting '${STAGE}' as array 1-${N}  (config: ${CONFIG})"
-qsub -t 1-"${N}" -v CONFIG="${CONFIG}" "hpc/jobs/${STAGE}.sh"
+qsub -t 1-"${N}" -v CONFIG="${CONFIG}" "$(crlf_safe_job "hpc/jobs/${STAGE}.sh")"

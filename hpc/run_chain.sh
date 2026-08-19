@@ -124,6 +124,8 @@ if [ "${N}" -lt 1 ]; then
     exit 1
 fi
 
+trap 'rm -rf "${ORCANN_CRLF_TMPDIR}"' EXIT
+
 QSUB_COMMON=(-v CONFIG="${SNAPSHOT}" -o "${RUN_DIR}/logs" -e "${RUN_DIR}/logs")
 
 echo "run id      : ${RUN_ID}"
@@ -134,11 +136,11 @@ echo
 
 # -terse prints the bare job id. For an array job that is "12345.1-N:1", so trim
 # at the first dot to get the id -hold_jid wants.
-SEG_ID=$(qsub -terse -t 1-"${N}" "${QSUB_COMMON[@]}" hpc/jobs/segment.sh)
+SEG_ID=$(qsub -terse -t 1-"${N}" "${QSUB_COMMON[@]}" "$(crlf_safe_job hpc/jobs/segment.sh)")
 SEG_ID="${SEG_ID%%.*}"
 echo "segment     : ${SEG_ID}  (array 1-${N})"
 
-ACT_ID=$(qsub -terse -t 1-"${N}" -hold_jid "${SEG_ID}" "${QSUB_COMMON[@]}" hpc/jobs/activity.sh)
+ACT_ID=$(qsub -terse -t 1-"${N}" -hold_jid "${SEG_ID}" "${QSUB_COMMON[@]}" "$(crlf_safe_job hpc/jobs/activity.sh)")
 ACT_ID="${ACT_ID%%.*}"
 echo "activity    : ${ACT_ID}  (array 1-${N}, holds on ${SEG_ID})"
 
@@ -146,7 +148,7 @@ echo "activity    : ${ACT_ID}  (array 1-${N}, holds on ${SEG_ID})"
 # output, which does not exist yet), so it reuses N. Surplus tasks are harmless:
 # an out-of-range --task-id yields an empty listing and the stage exits cleanly.
 ANA_ID=$(qsub -terse -hold_jid "${ACT_ID}" -v CONFIG="${SNAPSHOT}",EXPECTED_N="${N}" \
-              -o "${RUN_DIR}/logs" -e "${RUN_DIR}/logs" hpc/jobs/analysis.sh)
+              -o "${RUN_DIR}/logs" -e "${RUN_DIR}/logs" "$(crlf_safe_job hpc/jobs/analysis.sh)")
 ANA_ID="${ANA_ID%%.*}"
 echo "analysis    : ${ANA_ID}  (holds on ${ACT_ID})"
 
