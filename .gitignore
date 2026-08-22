@@ -66,9 +66,12 @@ env/
 # whose method is still being decided, held back until they have been checked
 # against real recordings. The flag defaults to false and the call site is
 # wrapped, so a checkout without this package behaves exactly as if the flag did
-# not exist. Drop this rule when an analysis graduates — or better, move it into
-# orcann.analysis / orcann.figures and lose the flag with it.
-src/orcann/dev/
+# not exist. An analysis graduates by being named below once it has been checked
+# against real recordings — or better, by moving into orcann.analysis /
+# orcann.figures and losing the flag with it.
+src/orcann/dev/*
+!src/orcann/dev/__init__.py
+!src/orcann/dev/transient_decay.py
 
 # Tool caches that land in the repo root (matplotlib font cache, etc.)
 .cache/
