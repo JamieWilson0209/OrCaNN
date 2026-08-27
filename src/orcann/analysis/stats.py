@@ -44,7 +44,6 @@ from .loading import (
 )
 from .metrics import (
     _get_neuron_rates, _get_neuron_amplitudes, _recording_metric,
-    _zscore_within_dataset,
     _pairwise_correlations, _synchrony_index,
     _measure_transient_amplitudes,
     build_feature_matrix,
@@ -103,9 +102,14 @@ def run_statistical_tests(datasets: List[DatasetMetrics], output_dir: str) -> di
 
     # ── Kruskal-Wallis ───────────────────────────────────────────────────
     kw_result = None
-    if len(per_ds_rates) >= 2 and all(len(r) >= 2 for r in per_ds_rates):
-        H, p_kw = sp_stats.kruskal(*per_ds_rates)
-        kw_result = {'H': float(H), 'p': float(p_kw), 'n_groups': len(per_ds_rates)}
+    # Drop groups too small to test rather than abandoning the test entirely — a
+    # single 1-neuron recording used to suppress it for the whole dataset with no
+    # reason recorded. Matches the handling in _run_tests.
+    kw_valid = [r for r in per_ds_rates if len(r) >= 2]
+    if len(kw_valid) >= 2:
+        H, p_kw = sp_stats.kruskal(*kw_valid)
+        kw_result = {'H': float(H), 'p': float(p_kw), 'n_groups': len(kw_valid),
+                     'n_groups_dropped': len(per_ds_rates) - len(kw_valid)}
 
     # ── Pairwise Mann-Whitney U ──────────────────────────────────────────
     n_pairs = len(per_ds_rates) * (len(per_ds_rates) - 1) // 2
@@ -430,7 +434,7 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
        a within-day effect size (Cohen's d), then combine effect sizes across
        days with a fixed-effects meta-analysis.
 
-    Metrics compared (all using z-scored values to remove imaging confounds):
+    Metrics compared (raw per-recording values):
     - Spike rate (per-neuron, from deconvolved spike trains)
     - Spike amplitude (per-neuron, from denoised trace transients)
     - Pairwise correlation (per-recording, from denoised traces)
@@ -439,7 +443,7 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
     Statistical tests:
     - Mann-Whitney U (non-parametric, two-sided) with Bonferroni correction
     - Cohen's d effect sizes
-    - Both raw and z-scored comparisons reported side-by-side
+    - Raw per-recording comparisons
 
     Parameters
     ----------
@@ -538,10 +542,15 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
     # Per-neuron pooled (supplementary)
     ctrl_rates_raw = np.concatenate([_ds_spike_rates(ds) for ds in ctrl_ds]) if ctrl_ds else np.array([])
     mut_rates_raw = np.concatenate([_ds_spike_rates(ds) for ds in mut_ds]) if mut_ds else np.array([])
-    ctrl_amps_raw = np.concatenate([_ds_spike_amplitudes(ds) for ds in ctrl_ds
-                                    if len(_ds_spike_amplitudes(ds)) > 0]) if ctrl_ds else np.array([])
-    mut_amps_raw = np.concatenate([_ds_spike_amplitudes(ds) for ds in mut_ds
-                                   if len(_ds_spike_amplitudes(ds)) > 0]) if mut_ds else np.array([])
+    # np.concatenate([]) raises, and the recordings can all yield empty amplitude
+    # arrays even when the recording list is non-empty — so guard the parts, not
+    # the input list. Evaluated once per dataset rather than three times.
+    def _pooled_amps(ds_list):
+        parts = [a for a in (_ds_spike_amplitudes(ds) for ds in ds_list) if len(a) > 0]
+        return np.concatenate(parts) if parts else np.array([])
+
+    ctrl_amps_raw = _pooled_amps(ctrl_ds)
+    mut_amps_raw = _pooled_amps(mut_ds)
 
     # Per-recording averages (PRIMARY — each dot = one recording)
     def _recording_means(ds_list):
@@ -580,9 +589,9 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
     logger.info(f"  Mutant:  {len(mut_rec_rates)} recordings with active neurons "
                 f"({len(mut_rates_raw)} total neurons)")
 
-    def _run_mw_test(ctrl, mut, label, use_zscore=False):
+    def _run_mw_test(ctrl, mut, label):
         """Run Mann-Whitney U and compute Cohen's d. NaN values are excluded."""
-        result = {'metric': label, 'z_scored': use_zscore}
+        result = {'metric': label}
         ctrl = ctrl[np.isfinite(ctrl)]
         mut  = mut[np.isfinite(mut)]
         if len(ctrl) < 2 or len(mut) < 2:
@@ -885,8 +894,10 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
                 })
 
     # Log outlier results
-    af_q1, af_q3 = np.percentile(all_af, [25, 75])
-    corr_q1, corr_q3 = np.percentile(all_corr, [25, 75])
+    # np.percentile raises on an empty array; all_af/all_corr are empty when no
+    # recording has a finite pairwise correlation. Same guard as the fences above.
+    af_q1, af_q3 = np.percentile(all_af, [25, 75]) if len(all_af) else (np.nan, np.nan)
+    corr_q1, corr_q3 = np.percentile(all_corr, [25, 75]) if len(all_corr) else (np.nan, np.nan)
     n_ctrl_out = sum(1 for o in outlier_records if o['genotype'] == 'Control')
     n_mut_out = sum(1 for o in outlier_records if o['genotype'] != 'Control')
 
@@ -971,81 +982,10 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
 
     global_path = os.path.join(geno_dir, 'genotype_activity_combined.png')
 
-    # ── Figure 3: Within-day breakdown ───────────────────────────────────
-    paired_days = [d for d in unique_days
-                   if not within_day_results.get(d, {}).get('skipped', True)]
-
-    if paired_days:
-        n_days = len(paired_days)
-        fig, axes = plt.subplots(1, n_days, figsize=(max(6, n_days * 4.5), 6),
-                                 squeeze=False)
-        fig.patch.set_facecolor('white')
-
-        for i, day in enumerate(paired_days):
-            ax = axes[0, i]
-            ax.set_facecolor('white')
-
-            day_ctrl = [ds for ds, g, o in geno_datasets if o == day and g == 'Control']
-            day_mut = [ds for ds, g, o in geno_datasets if o == day and g == 'Mutant']
-
-            # Per-recording mean spike rates (active neurons only)
-            c_rates = np.array([float(np.mean(r)) for ds in day_ctrl
-                                for r in [_ds_spike_rates(ds)] if len(r) > 0])
-            m_rates = np.array([float(np.mean(r)) for ds in day_mut
-                                for r in [_ds_spike_rates(ds)] if len(r) > 0])
-
-            if len(c_rates) == 0 or len(m_rates) == 0:
-                continue
-
-            bp = ax.boxplot([c_rates, m_rates], positions=[0, 1], widths=0.5,
-                            patch_artist=True, showfliers=False,
-                            medianprops=dict(color='white', linewidth=1.5),
-                            whiskerprops=dict(color='#555', linewidth=0.8),
-                            capprops=dict(color='#555', linewidth=0.8))
-            for patch, col_c in zip(bp['boxes'], [CTRL_COLOR, MUT_COLOR]):
-                patch.set_facecolor(col_c)
-                patch.set_alpha(0.35)
-                patch.set_edgecolor(col_c)
-
-            for j, (vals, col_c) in enumerate(zip([c_rates, m_rates],
-                                                   [CTRL_COLOR, MUT_COLOR])):
-                jitter = rng.uniform(-0.15, 0.15, len(vals))
-                ax.scatter(j + jitter, vals, c=col_c, s=40, alpha=0.7,
-                           zorder=5, edgecolors='white', linewidth=0.5)
-
-            ax.set_xticks([0, 1])
-            ax.set_xticklabels([f'Ctrl\n(n={len(c_rates)} rec)',
-                                f'Mut\n(n={len(m_rates)} rec)'],
-                               fontsize=9)
-            for tick, col_c in zip(ax.get_xticklabels(), [CTRL_COLOR, MUT_COLOR]):
-                tick.set_color(col_c)
-
-            # Significance
-            wd = within_day_results[day]
-            t_raw = wd.get('spike_rate_raw', {})
-            if 'p' in t_raw:
-                stars = _sig_stars(t_raw['p'])
-                _cr = c_rates[np.isfinite(c_rates)]
-                _mr = m_rates[np.isfinite(m_rates)]
-                y_max = max(float(np.max(_cr)) if len(_cr) > 0 else 0,
-                            float(np.max(_mr)) if len(_mr) > 0 else 0)
-                _draw_sig_bracket(ax, 0, 1, y_max * 1.05, y_max * 0.06,
-                                  f"{stars} {_fmt_p(t_raw['p'])}", fontsize=8)
-                ax.set_ylim(top=y_max * 1.3)
-
-            ax.set_title(f'{day}\n({len(day_ctrl)} ctrl, {len(day_mut)} mut rec)',
-                         fontsize=10, fontweight='bold')
-            ax.set_ylabel('Event rate (events/10s)' if i == 0 else '', fontsize=9)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.grid(axis='y', alpha=0.15)
-
-        fig.suptitle(f'Within-Day Genotype Comparison: Control vs {mutant_label}',
-                     fontsize=13, fontweight='bold')
-        plt.tight_layout()
-        within_path = os.path.join(geno_dir, 'genotype_within_day.png')
-        plt.savefig(within_path, dpi=200, bbox_inches='tight', facecolor='white')
-        plt.close()
+    # (Within-day breakdown figure removed. Its `paired_days` guard could never
+    # be true — the success path never set a top-level 'skipped' key — so the
+    # plot was never produced in any run. The per-day results it would have
+    # drawn are still recorded in results['tests']['within_day'].)
 
     # ── Figure 4: Meta-analysis forest plot ──────────────────────────────
     if len(day_effect_sizes) >= 2:
@@ -1083,7 +1023,7 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
         ax.set_yticks(y_positions + [y_pooled])
         ax.set_yticklabels(day_labels, fontsize=9)
         ax.set_xlabel("Cohen's d (positive = Control > Mutant)", fontsize=10)
-        ax.set_title('Meta-Analysis: Z-Scored Event Rate Effect Sizes by Day',
+        ax.set_title('Meta-Analysis: Event Rate Effect Sizes by Day',
                      fontsize=12, fontweight='bold')
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -1181,7 +1121,7 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
             ax.legend(fontsize=9)
 
             # Robust y-limits: clip to 95th percentile to prevent outlier stretching
-            all_y = [v for v in ax.collections[0].get_offsets()[:, 1]] if ax.collections else []
+            all_y = []          # the loop below covers every collection, including the first
             for coll in ax.collections:
                 offs = coll.get_offsets()
                 if len(offs) > 0:
@@ -1266,10 +1206,13 @@ def run_between_organoid_tests(datasets: List[DatasetMetrics], output_dir: str) 
     # across organoid days. Not used for statistical testing.
     org_rates = OrderedDict()
     org_amplitudes = OrderedDict()
+    n_zero_total = 0          # counted here: _get_neuron_rates strips these
     for oid, dsets in organoid_map.items():
         pooled_rates = []
         pooled_amps = []
         for ds in dsets:
+            if ds.neuron_spike_rates is not None and len(ds.neuron_spike_rates) > 0:
+                n_zero_total += int(np.sum(np.asarray(ds.neuron_spike_rates) == 0))
             rates = _get_neuron_rates(ds)
             amps = _get_neuron_amplitudes(ds)
             pooled_rates.extend(rates)
@@ -1396,7 +1339,7 @@ def run_between_organoid_tests(datasets: List[DatasetMetrics], output_dir: str) 
     _global_sd   = float(np.std(all_rates_flat, ddof=1)) if len(all_rates_flat) > 1 else 1.0
     _y_clip      = _global_mean + 3.0 * _global_sd  # upper clip boundary
 
-    n_zero_total     = int(np.sum(all_rates_flat == 0))
+    # n_zero_total is accumulated above, before the rate > 0 filter
     n_excluded_total = int(np.sum(all_rates_flat > _y_clip))
 
     # Overlay individual neuron dots — zeros and >3 SD outliers excluded from
@@ -1461,34 +1404,40 @@ def run_between_organoid_tests(datasets: List[DatasetMetrics], output_dir: str) 
     fig_amp.patch.set_facecolor('white')
     ax_amp.set_facecolor('white')
 
-    amp_arrays = [org_amplitudes[oid] for oid in org_ids]
+    # org_ids is narrowed on org_rates, but org_amplitudes is populated under a
+    # separate condition (rates > 0 vs amps > 0), so an organoid can be in one and
+    # not the other. Use one key list for the boxes, the positions and the colours.
+    amp_ids = [oid for oid in org_ids if oid in org_amplitudes]
+    n_amp = len(amp_ids)
+    amp_arrays = [org_amplitudes[oid] for oid in amp_ids]
     bp_amp = ax_amp.boxplot(
-        amp_arrays, positions=range(n_org), widths=0.55,
+        amp_arrays, positions=range(n_amp), widths=0.55,
         patch_artist=True, showfliers=False,
         medianprops=dict(color='#CC3333', linewidth=1.5),
         whiskerprops=dict(color='#555555', linewidth=0.8),
         capprops=dict(color='#555555', linewidth=0.8),
     )
     for i, patch in enumerate(bp_amp['boxes']):
-        col = org_colors[org_ids[i]]
+        col = org_colors[amp_ids[i]]
         patch.set_facecolor(col)
         patch.set_alpha(0.25)
         patch.set_edgecolor(col)
         patch.set_linewidth(0.8)
 
     # Overlay individual neurons
-    for i, (oid, amps) in enumerate(org_amplitudes.items()):
+    for i, oid in enumerate(amp_ids):
+        amps = org_amplitudes[oid]
         if len(amps) > 0:
             jitter = rng.uniform(-0.18, 0.18, len(amps))
             ax_amp.scatter(i + jitter, amps, color=org_colors[oid], s=8,
                           alpha=0.3, zorder=5, linewidths=0, edgecolors='none')
 
-    ax_amp.set_xticks(range(n_org))
-    ax_amp.set_xticklabels(org_ids, fontsize=10, fontweight='bold',
-                           rotation=45 if n_org > 6 else 0, 
-                           ha='right' if n_org > 6 else 'center')
+    ax_amp.set_xticks(range(n_amp))
+    ax_amp.set_xticklabels(amp_ids, fontsize=10, fontweight='bold',
+                           rotation=45 if n_amp > 6 else 0,
+                           ha='right' if n_amp > 6 else 'center')
     # Color x-tick labels
-    for i, (tick_label, oid) in enumerate(zip(ax_amp.get_xticklabels(), org_ids)):
+    for i, (tick_label, oid) in enumerate(zip(ax_amp.get_xticklabels(), amp_ids)):
         tick_label.set_color(org_colors[oid])
     
     ax_amp.set_ylabel('Transient amplitude (ΔF/F₀)', fontsize=11)
@@ -1851,11 +1800,19 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
     ROIs are ranked by peak_SNR = max(denoised) / OASIS_sn and the rank
     number is embedded in the filename so they sort naturally.
 
-    Reference frame selection: scan backwards from the peak frame with a
-    minimum margin of 1 frame before the peak, find the lowest-intensity
-    frame within the 10 seconds preceding the spike for maximum contrast.
-    fluorescence in the ROI bounding box is closest to the rolling baseline
-    of the raw trace.  This avoids picking a frame mid-transient.
+    Reference frame selection: the frame of lowest ΔF/F₀ in the 10 s preceding
+    the peak (argmin), with a margin of 1 frame before the peak.  Falls back to
+    peak - 1 if the trace is unavailable.
+
+    The trace searched is ``data/temporal_traces.npy`` — ΔF/F₀ as produced by
+    the activity stage, so the baseline has already been removed by
+    ``baseline.method`` (default ``global_dff``: a rolling percentile, config
+    ``baseline.percentile`` over a window of ``window_fraction`` x T frames
+    clamped to [``min_window``, ``max_window``]).  There is no second baseline
+    estimated here.  The minimum of a baseline-corrected trace sits at or just
+    below resting level, which is the intent — a low-contrast reference against
+    the transient — though being a minimum it lands on a downward noise
+    excursion rather than the mean resting level.
 
     Output: figures/ROI Peak Frames/{recording_name}/rank{N:03d}_roi{M:04d}.png
     """
@@ -1872,7 +1829,7 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
 
         # ── Load required arrays ──────────────────────────────────────────
         denoised_path  = result_path / 'data' / 'traces_denoised.npy'
-        raw_path       = result_path / 'data' / 'temporal_traces.npy'
+        dff_path       = result_path / 'data' / 'temporal_traces.npy'
         spikes_path    = result_path / 'data' / 'spike_trains.npy'
         noise_path     = result_path / 'data' / 'deconv_noise.npy'
         footprint_path = result_path / 'data' / 'spatial_footprints.npz'
@@ -1886,7 +1843,7 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
 
         C_all  = np.load(denoised_path)
         S_all  = np.load(spikes_path)
-        R_all  = np.load(raw_path) if raw_path.exists() else None
+        DFF_all = np.load(dff_path) if dff_path.exists() else None   # ΔF/F₀, not raw
         noise  = np.load(noise_path) if noise_path.exists() else None
 
         # ── Load movie ────────────────────────────────────────────────────
@@ -1913,9 +1870,21 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
                         movie = _tifread(movie_path).astype(np.float32)
                     elif ext == '.npy':
                         movie = np.load(movie_path).astype(np.float32)
+                    else:
+                        raise ValueError(f"unsupported movie format {ext!r}")
+                    # Normalise to (T, H, W) here, where the failure is still
+                    # inside this try. A 4-D stack or a single 2-D frame used to
+                    # reach `_, mh, mw = movie.shape` further down, outside any
+                    # handler, and take every remaining dataset's figures with it.
+                    if movie.ndim == 4:
+                        movie = movie[:, 0]
+                    elif movie.ndim == 2:
+                        movie = movie[None]
+                    if movie.ndim != 3:
+                        raise ValueError(f"expected a 3-D movie, got {movie.shape}")
                     logger.info(f"  {ds.name}: loaded movie {movie.shape}")
                 except Exception as me:
-                    logger.warning(f"  {ds.name}: movie load failed ({me}), using projections only")
+                    logger.warning(f"  {ds.name}: movie unusable ({me}), using projections only")
                     movie = None
 
         # ── Load spatial footprints + reconcile dims ──────────────────────
@@ -1976,6 +1945,10 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
 
             except Exception as ae:
                 logger.warning(f"  {ds.name}: footprint load failed: {ae}")
+                # Must match the `not dims_ok` path above: leaving A_sparse set
+                # lets the guard downstream pass with d1/d2 unbound, or worse,
+                # still holding the previous dataset's dimensions.
+                A_sparse = None
 
         # ── Global contrast for movie frames ─────────────────────────────
         if movie is not None:
@@ -2016,10 +1989,10 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
         T           = C_all.shape[1]
         t_ax        = np.arange(T) / frame_rate
         ref_margin  = ref_margin_frames
-        bl_window   = max(10, int(5.0 * frame_rate))  # 5s rolling baseline window
 
         rec_dir = os.path.join(out_root, ds.name)
         os.makedirs(rec_dir, exist_ok=True)
+        n_written = 0
 
         for rank_pos, sel_j in enumerate(rank_order):
             orig_roi = int(roi_indices[sel_j])
@@ -2029,20 +2002,20 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
                 continue
 
             den   = C_all[orig_roi]
-            raw   = R_all[orig_roi] if R_all is not None and orig_roi < R_all.shape[0] else None
+            dff   = DFF_all[orig_roi] if DFF_all is not None and orig_roi < DFF_all.shape[0] else None
             spikes = S_all[orig_roi] if orig_roi < S_all.shape[0] else np.zeros(T)
 
             # ── Find peak transient frame ─────────────────────────────────
             peak_frame = int(np.argmax(den))
 
             # ── Find reference frame ──────────────────────────────────────
-            # Lowest mean ROI fluorescence in the 10s window before the peak.
-            # Using raw trace minimum for maximum contrast with the transient.
+            # Lowest ΔF/F₀ in the 10 s window before the peak, for contrast
+            # against the transient. The baseline is already removed upstream.
             search_window_frames = max(1, int(10.0 * frame_rate))
             search_start = max(0, peak_frame - search_window_frames)
             search_end   = max(0, peak_frame - ref_margin_frames)
-            if raw is not None and search_end > search_start:
-                window_vals = raw[search_start:search_end]
+            if dff is not None and search_end > search_start:
+                window_vals = dff[search_start:search_end]
                 ref_frame = search_start + int(np.argmin(window_vals))
             else:
                 ref_frame = max(0, peak_frame - ref_margin_frames)
@@ -2120,9 +2093,9 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
             # ── Bottom: full trace ────────────────────────────────────────
             ax_tr.set_facecolor('black')
 
-            # Raw trace
-            if raw is not None:
-                ax_tr.plot(t_ax, raw, color='#606878', linewidth=0.6,
+            # ΔF/F₀ trace (baseline-corrected upstream; not raw fluorescence)
+            if dff is not None:
+                ax_tr.plot(t_ax, dff, color='#606878', linewidth=0.6,
                            alpha=0.7, zorder=2)
 
             # Denoised trace
@@ -2164,8 +2137,9 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
             fig.savefig(fname, dpi=150, bbox_inches='tight',
                         facecolor='black')
             plt.close(fig)
+            n_written += 1
 
-        n_saved = len(rank_order)
+        n_saved = n_written        # ROIs skipped by the bounds check never saved
         logger.info(f"  {ds.name}: saved {n_saved} ROI peak figures → {rec_dir}/")
 
     logger.info(f"ROI peak figures complete → {out_root}/")
