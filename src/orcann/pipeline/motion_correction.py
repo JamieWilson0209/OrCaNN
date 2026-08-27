@@ -28,7 +28,9 @@ class MotionCorrectionResult:
     shifts: np.ndarray                 # (T, 2) per-frame [dy, dx] shifts
     template: np.ndarray               # (d1, d2) reference template
     correlations: np.ndarray           # (T,) frame-to-template correlation
-    mode: str = 'rigid'
+    mode: str = 'rigid'                # mode requested
+    applied_mode: str = 'rigid'        # mode actually delivered (may be weaker)
+    shift_source: str = 'rigid'        # field the (T,2) shifts were derived from
     max_shift_y: float = 0.0
     max_shift_x: float = 0.0
     mean_shift_y: float = 0.0
@@ -40,6 +42,9 @@ class MotionCorrectionResult:
     def summary(self) -> Dict:
         return {
             'mode': self.mode,
+            'applied_mode': self.applied_mode,
+            'degraded': self.applied_mode != self.mode,
+            'shift_source': self.shift_source,
             'max_shift_y': float(self.max_shift_y),
             'max_shift_x': float(self.max_shift_x),
             'mean_shift_y': float(self.mean_shift_y),
@@ -48,6 +53,58 @@ class MotionCorrectionResult:
             'crop_y': self.crop_y,
             'crop_x': self.crop_x,
         }
+
+
+def _per_frame_shifts(mc, mode: str, T: int):
+    """Per-frame [dy, dx] displacement, and the field it was derived from.
+
+    Rigid correction has one shift per frame and this is unambiguous.  Elastic
+    (piecewise-rigid) correction has no single per-frame shift: NoRMCorre
+    produces ``y_shifts_els`` / ``x_shifts_els``, each (T, n_patches).  Three
+    downstream consumers need a (T, 2) summary of it, and all three want the
+    same statistic — the **worst patch in each frame**:
+
+    * the border crop must be sized by the largest incursion anywhere in the
+      frame, or border pixels survive it;
+    * ``motion_max_threshold`` QC asks how far the sample moved, which is a
+      worst-case question;
+    * the saved ``_shifts.npy`` is read as "how bad was motion here".
+
+    So each frame reports the patch displacement of largest magnitude, per axis.
+    ``mean_shift_*`` derived from this is therefore a mean of per-frame maxima —
+    conservative by construction, which is the right bias for a QC gate.
+
+    Raises RuntimeError if no usable shift information exists.  Returning zeros
+    would be worse than failing: every consumer reads an all-zero array as
+    "this recording did not move", so the recording with unknown motion would
+    be the one most confidently certified clean.
+    """
+    def _extreme(field):
+        """(T, n_patches) -> (T,) the value of largest magnitude per row."""
+        a = np.asarray(field, dtype=np.float64)
+        if a.ndim == 1:
+            return a
+        idx = np.argmax(np.abs(a), axis=1)
+        return a[np.arange(a.shape[0]), idx]
+
+    if mode != 'rigid':
+        y_els = getattr(mc, 'y_shifts_els', None)
+        x_els = getattr(mc, 'x_shifts_els', None)
+        if y_els is not None and x_els is not None and len(y_els) and len(x_els):
+            shifts = np.stack([_extreme(y_els), _extreme(x_els)], axis=1)
+            return shifts, 'elastic'
+        logger.warning(
+            "  Piecewise-rigid requested but NoRMCorre exposed no elastic shift "
+            "fields — falling back to the rigid shifts for crop sizing and QC")
+
+    shifts_rig = getattr(mc, 'shifts_rig', None)
+    if shifts_rig is not None and len(shifts_rig):
+        return np.array([[s[0], s[1]] for s in shifts_rig], dtype=np.float64), 'rigid'
+
+    raise RuntimeError(
+        "NoRMCorre produced no usable shifts (neither elastic fields nor "
+        "shifts_rig) — motion correction cannot be verified, so the border crop "
+        "and the motion QC gates would both be computed from nothing.")
 
 
 def _resolve_tmpdir() -> str:
@@ -282,6 +339,9 @@ def _run_normcorre(
             logger.info(f"  mc.{attr} = {type(val).__name__}: {repr(val)[:120]}")
 
         corrected = None
+        # What was actually applied. Starts as what was requested and is
+        # downgraded if a fallback path delivers something weaker.
+        applied_mode = mode
         # Strategy 1: load from known file-path attributes
         for attr in ('fname_tot_rig', 'fname_tot_els', 'mmap_file'):
             candidate = getattr(mc, attr, None)
@@ -320,9 +380,18 @@ def _run_normcorre(
             logger.warning("  No CaImAn output found — applying shifts manually")
             from scipy.ndimage import shift as ndi_shift
 
-            shifts_rig = mc.shifts_rig
+            shifts_rig = getattr(mc, 'shifts_rig', None)
             if shifts_rig is None:
                 raise RuntimeError("NoRMCorre produced no shifts — correction failed entirely")
+            if mode != 'rigid':
+                # The manual path can only apply a whole-frame translation. A run
+                # that asked for piecewise-rigid gets rigid correction here, which
+                # is weaker than requested — recorded in applied_mode so the
+                # artefact says so rather than leaving it to the log.
+                applied_mode = 'rigid'
+                logger.warning(
+                    f"  DEGRADED: {mode} was requested but the manual fallback "
+                    f"applies rigid shifts only. Recording applied_mode='rigid'.")
             corrected = np.empty_like(movie, dtype=np.float32)
             for t in range(T):
                 dy, dx = shifts_rig[t]
@@ -334,16 +403,11 @@ def _run_normcorre(
                 ).astype(np.float32)
             logger.info(f"  Applied {T} frame shifts manually")
 
-        # Extract shifts
-        if mode == 'rigid':
-            shifts_list = mc.shifts_rig
-            shifts = np.array([[s[0], s[1]] for s in shifts_list])
-        else:
-            shifts_list = mc.x_shifts_els if hasattr(mc, 'x_shifts_els') else []
-            if hasattr(mc, 'shifts_rig') and mc.shifts_rig is not None:
-                shifts = np.array([[s[0], s[1]] for s in mc.shifts_rig])
-            else:
-                shifts = np.zeros((T, 2))
+        # Extract shifts. For elastic correction this summarises the patch
+        # field; see _per_frame_shifts for why it is the per-frame extreme.
+        shifts, shift_source = _per_frame_shifts(mc, mode, T)
+        if mode != 'rigid' and shift_source == 'rigid':
+            applied_mode = 'rigid'      # elastic field unavailable — recorded
 
         # Crop the border region that was shifted on/off the image.
         # These pixels are either NaN (border_nan='copy' can still leave
@@ -401,6 +465,8 @@ def _run_normcorre(
         template=template.astype(np.float32),
         correlations=correlations,
         mode=mode,
+        applied_mode=applied_mode,
+        shift_source=shift_source,
         max_shift_y=float(abs_shifts[:, 0].max()) if len(shifts) > 0 else 0,
         max_shift_x=float(abs_shifts[:, 1].max()) if len(shifts) > 0 else 0,
         mean_shift_y=float(abs_shifts[:, 0].mean()) if len(shifts) > 0 else 0,
