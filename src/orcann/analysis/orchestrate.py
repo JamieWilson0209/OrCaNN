@@ -337,6 +337,32 @@ def run_analysis(
 
     json_path = os.path.join(data_dir, 'analysis_results.json')
 
+    # ── Cohort consistency check ─────────────────────────────────────────
+    # Spike amplitudes are only comparable across recordings measured the same
+    # way. A recording whose pipeline_results.json was missing or unreadable
+    # falls back to the default method, which would otherwise pool two
+    # definitions of amplitude into one comparison without any trace.
+    _methods = {}
+    for d in datasets:
+        _methods.setdefault(getattr(d, 'amplitude_method', '') or 'unknown',
+                            []).append(d.name)
+    _fellback = [d.name for d in datasets
+                 if getattr(d, 'amplitude_method_resolved', '') == 'fallback']
+    results['amplitude_method'] = {
+        'by_method': _methods,
+        'consistent': len(_methods) <= 1,
+        'fell_back': _fellback,
+    }
+    if len(_methods) > 1:
+        logger.error(
+            "Spike amplitudes are NOT comparable across this cohort: "
+            + "; ".join(f"{m} ({len(v)} recording(s))" for m, v in _methods.items())
+            + ". Any amplitude comparison below pools two different measurements.")
+    elif _fellback:
+        logger.warning(
+            f"{len(_fellback)} recording(s) fell back to the default "
+            f"amplitude method: {', '.join(_fellback)}")
+
     # ── Analysis stages ──────────────────────────────────────────────────
     # Each stage is isolated so one failure cannot cost the run the others, but
     # every outcome is recorded: the report is written into the results JSON and

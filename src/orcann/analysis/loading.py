@@ -195,6 +195,8 @@ class DatasetMetrics:
 
     # Genotype (v2.0)
     genotype: str = ''                 # 'Control', 'Mutant', or 'Unknown'
+    amplitude_method: str = ''         # how spike amplitudes were measured
+    amplitude_method_resolved: str = ''  # 'file' | 'default' | 'fallback'
     
     # Manual override
     manually_inactive: bool = False    # True if visually confirmed no activity
@@ -267,16 +269,43 @@ def load_dataset_metrics(
     C_raw_fluorescence = np.load(raw_fluor_path) if raw_fluor_path.exists() else None
 
     # Check which amplitude method was used for this dataset
-    amplitude_method = 'global_dff'  # default
+    # How spike amplitudes are measured depends on how the pipeline computed
+    # ΔF/F, so this is not a cosmetic setting: 'direct'/'local_dff' measure each
+    # event from raw fluorescence, the others from corrected traces. Falling back
+    # silently means one recording's amplitudes are computed differently from its
+    # neighbours' and the comparison pools two definitions. The fallback stays
+    # (one unreadable file should not lose the recording), but it is announced,
+    # and the resolved value is recorded on the dataset so mixed-method
+    # comparisons can be detected downstream.
+    _AMP_DEFAULT = 'global_dff'
+    amplitude_method = _AMP_DEFAULT
+    amplitude_method_resolved = 'default'      # 'file' | 'default' | 'fallback'
     pipeline_json_path = result_path / 'pipeline_results.json'
     if pipeline_json_path.exists():
         try:
             import json as _json
             with open(pipeline_json_path) as _f:
                 _pres = _json.load(_f)
-            amplitude_method = _pres.get('amplitude_method', 'global_dff')
-        except Exception:
-            pass
+            if 'amplitude_method' in _pres:
+                amplitude_method = _pres['amplitude_method']
+                amplitude_method_resolved = 'file'
+            else:
+                logger.warning(
+                    f"  {name}: pipeline_results.json has no 'amplitude_method' "
+                    f"- assuming '{_AMP_DEFAULT}'")
+                amplitude_method_resolved = 'fallback'
+        except Exception as e:
+            logger.warning(
+                f"  {name}: could not read amplitude_method from "
+                f"{pipeline_json_path.name} ({e}) - falling back to "
+                f"'{_AMP_DEFAULT}'. Spike amplitudes for this recording may not "
+                f"be comparable with the rest of the cohort.")
+            amplitude_method_resolved = 'fallback'
+    else:
+        logger.warning(
+            f"  {name}: no pipeline_results.json - assuming "
+            f"amplitude_method='{_AMP_DEFAULT}'")
+        amplitude_method_resolved = 'fallback'
 
     # Load deconvolved data
     has_deconv = denoised_path.exists() and spikes_path.exists()
@@ -557,6 +586,8 @@ def load_dataset_metrics(
     n_bursts, burst_rate_val, burst_part = _network_bursts_from_spikes(S_sel, frame_rate)
 
     ds = DatasetMetrics(
+        amplitude_method=amplitude_method,
+        amplitude_method_resolved=amplitude_method_resolved,
         name=name, filepath=str(result_path),
         n_neurons=N, n_confident=n_deconv_pass, n_selected=actual_n,
         n_hard_rejected=n_deconv_fail, n_overlap_removed=0,
