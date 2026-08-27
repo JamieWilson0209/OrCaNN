@@ -22,6 +22,8 @@ References:
 
 import os
 import numpy as np
+
+from orcann.activity.baseline import compute_dff_traces
 import logging
 from typing import Tuple, Optional, Dict, List
 
@@ -236,15 +238,20 @@ def _apply_safety_net(result, C_dff, frame_rate, decay_time,
     empty = S.sum(axis=1) == 0
     if not empty.any():
         return result
+    n_censored = result.get('n_spikes_censored')
+    if n_censored is None:
+        n_censored = np.zeros(N, dtype=np.int32)
+        result['n_spikes_censored'] = n_censored
     n_rescued = 0
     for i in np.where(empty)[0]:
         tr = C_dff[i].astype(np.float64)
         sn = _mad_noise(tr)
-        s_i, n_ev = _robust_events(tr, sn, frame_rate,
-                                   k_onset, k_peak, min_duration_s)
+        s_i, n_ev, n_cens = _robust_events(tr, sn, frame_rate,
+                                           k_onset, k_peak, min_duration_s)
         if n_ev > 0:
             S[i] = s_i
             result['n_spikes'][i] = n_ev
+            n_censored[i] = n_cens
             n_rescued += 1
     if n_rescued:
         logger.info(f"  Safety net: recovered {n_rescued} ROI(s) with clear "
@@ -259,7 +266,7 @@ def _ensure_dff(C: np.ndarray, frame_rate: float) -> np.ndarray:
 
     If data is raw fluorescence (median > 1.0): apply the standard
     rolling-percentile baseline correction (delegates to
-    :func:`preprocessing.compute_dff_traces` so there is one canonical
+    :func:`orcann.activity.baseline.compute_dff_traces` so there is one canonical
     implementation).
 
     If data is already ΔF/F₀ (median ≤ 1.0): pass through without
@@ -277,11 +284,6 @@ def _ensure_dff(C: np.ndarray, frame_rate: float) -> np.ndarray:
 
     logger.info(f"  Traces appear to be raw fluorescence (median={median_val:.1f}), "
                 f"converting to ΔF/F₀...")
-
-    try:
-        from preprocessing import compute_dff_traces
-    except ImportError:
-        from .preprocessing import compute_dff_traces
 
     C_dff, _, _ = compute_dff_traces(
         C, frame_rate=frame_rate,
@@ -606,7 +608,7 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
     T = len(trace)
     S = np.zeros(T, dtype=np.float32)
     if noise <= 0:
-        return S, 0
+        return S, 0, 0
     base = float(np.median(trace))
     onset = base + k_onset * noise
     peak_thr = base + k_peak * noise
@@ -614,6 +616,7 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
 
     above = trace > onset
     n_events = 0
+    n_censored = 0
     i = 0
     while i < T:
         if not above[i]:
@@ -627,8 +630,18 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
             pk = i + int(np.argmax(seg))
             S[pk] = float(trace[pk] - base)
             n_events += 1
+            # An excursion that touches either end of the trace is censored: it
+            # was already under way when recording started, or had not finished
+            # when it stopped. The event is real and stays in the spike train —
+            # it began inside the window, so it belongs in a rate — but its
+            # duration is unknown and its peak may lie outside the trace, so the
+            # amplitude in S is a lower bound. Counted separately rather than
+            # dropped: excluding real events is a scientific decision, not an
+            # engineering one, and the caller is better placed to make it.
+            if i == 0 or j == T:
+                n_censored += 1
         i = j
-    return S, n_events
+    return S, n_events, n_censored
 
 
 def _deconvolve_robust(C, frame_rate, decay_time,
@@ -644,17 +657,22 @@ def _deconvolve_robust(C, frame_rate, decay_time,
     S = np.zeros((N, T), dtype=np.float32)
     noise_levels = np.zeros(N, dtype=np.float32)
     n_spikes = np.zeros(N, dtype=np.int32)
+    n_censored = np.zeros(N, dtype=np.int32)
     for i in range(N):
         tr = C[i].astype(np.float64)
         sn = _mad_noise(tr)
         noise_levels[i] = sn
-        S[i], n_spikes[i] = _robust_events(tr, sn, frame_rate,
-                                           k_onset, k_peak, min_duration_s)
+        S[i], n_spikes[i], n_censored[i] = _robust_events(
+            tr, sn, frame_rate, k_onset, k_peak, min_duration_s)
     n_active = int((n_spikes > 0).sum())
     med_active = float(np.median(n_spikes[n_spikes > 0])) if n_active else 0.0
     logger.info(f"  Robust transient detection: {n_active}/{N} ROIs active, "
                 f"median {med_active:.0f} events/active ROI "
                 f"(k_onset={k_onset}, k_peak={k_peak}, min_dur={min_duration_s}s)")
+    n_cens_total = int(n_censored.sum())
+    if n_cens_total:
+        logger.info(f"  {n_cens_total} event(s) touch a trace boundary — real "
+                    f"events, but duration unknown and amplitude a lower bound")
     return {
         'C_denoised': C.copy(),
         'S':          S,
@@ -663,4 +681,5 @@ def _deconvolve_robust(C, frame_rate, decay_time,
         'g':          np.full((N, 1), np.exp(-1.0 / (frame_rate * decay_time))),
         'method':     'robust',
         'n_spikes':   n_spikes,
+        'n_spikes_censored': n_censored,
     }
