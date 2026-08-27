@@ -12,7 +12,7 @@ gallery / analysis. For each segmented recording it:
      data/{temporal_traces, temporal_traces_raw, traces_denoised, spike_trains,
      deconv_noise, spatial_footprints.npz, max_projection, mean_projection}
      plus run_info.json (dims + frame rate);
-  5. renders the interactive HTML gallery (and, optionally, the movie gallery).
+  5. renders the interactive HTML gallery.
 
 Recordings whose temporal_traces.npy already exists are skipped unless force=True.
 The output folder is named by recording_id, so the genotype/day parsing in the
@@ -177,9 +177,9 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
 
 def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
                      c_dff, c_raw, denoised, spikes, noise):
-    """Interactive (and optional movie) HTML gallery for one recording."""
+    """Interactive HTML gallery for one recording."""
     g = cfg.gallery
-    if not (g.interactive or g.movie):
+    if not g.interactive:
         return
     from orcann.activity.roi_adapter import build_seed_view, build_projections
     seeds = build_seed_view(labels, max_projection=max_proj, centroids=centroids)
@@ -197,18 +197,6 @@ def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
             logger.info("  gallery.html written")
         except Exception as e:                       # a gallery failure must not lose data
             logger.warning(f"  interactive gallery failed: {e}")
-    if g.movie:
-        try:
-            from orcann.activity.movie_gallery import generate_movie_gallery
-            generate_movie_gallery(
-                movie, seeds, out_dir, frame_rate=cfg.imaging.frame_rate,
-                subsample=g.movie_subsample, max_rois=g.max_rois,
-                title=f"{rec_id} - Movie Gallery",
-                traces_denoised=denoised, spike_trains=spikes,
-                movie_processed=movie, deconv_noise=noise)
-            logger.info("  movie gallery written")
-        except Exception as e:
-            logger.warning(f"  movie gallery failed: {e}")
 
 
 def run(cfg, task_id=None, force=False):

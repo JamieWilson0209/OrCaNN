@@ -104,8 +104,6 @@ class FigureParams:
 @dataclass
 class GalleryParams:
     interactive: bool = True          # per-recording interactive HTML gallery
-    movie: bool = False               # full-movie HTML viewer (large; off by default)
-    movie_subsample: int = 1          # keep every Nth frame in the movie gallery
     max_rois: int = 500               # cap ROIs drawn in the gallery
 
 
@@ -381,8 +379,6 @@ _FIELD_DOC = {
     "motion_correction.max_shift": "maximum shift in px",
     "figures.enabled": "write the spatial QC overlay in segment",
     "gallery.interactive": "per-recording interactive HTML gallery (gallery.html)",
-    "gallery.movie": "full-movie HTML viewer (large file; off by default)",
-    "gallery.movie_subsample": "keep every Nth frame in the movie gallery",
     "gallery.max_rois": "cap the number of ROIs drawn in the gallery",
     "train_spatial.movies": "dir of training movies (<stem>.tif)",
     "train_spatial.masks": "dir of instance-label masks (<stem>.npy) or ImageJ ROI sets",

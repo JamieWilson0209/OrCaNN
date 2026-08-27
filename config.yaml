@@ -68,8 +68,6 @@ figures:
 # Per-recording HTML galleries written by the activity stage
 gallery:
   interactive: true   # per-recording interactive HTML gallery (gallery.html)
-  movie: false        # full-movie HTML viewer (large file; off by default)
-  movie_subsample: 1  # keep every Nth frame in the movie gallery
   max_rois: 500       # cap the number of ROIs drawn in the gallery
 
 # train_spatial - fit the segmenter
