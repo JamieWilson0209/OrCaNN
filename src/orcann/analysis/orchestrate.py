@@ -25,6 +25,7 @@ if 'MPLCONFIGDIR' not in os.environ:
 
 import numpy as np
 
+from ..stage_report import StageReport
 from .loading import (
     DatasetMetrics, FEATURE_NAMES,
     load_dataset_metrics, _extract_genotype, _extract_organoid_id,
@@ -336,69 +337,69 @@ def run_analysis(
 
     json_path = os.path.join(data_dir, 'analysis_results.json')
 
-    # ── Statistical tests ────────────────────────────────────────────────
-    try:
-        stat_results = run_statistical_tests(datasets, output_dir)
+    # ── Analysis stages ──────────────────────────────────────────────────
+    # Each stage is isolated so one failure cannot cost the run the others, but
+    # every outcome is recorded: the report is written into the results JSON and
+    # drives the process exit code, so a partial run is never mistaken for a
+    # clean one. See orcann/stage_report.py.
+    report = StageReport()
+
+    stat_results = report.run("statistical_tests",
+                              run_statistical_tests, datasets, output_dir)
+    if stat_results is not None:
         results['statistical_tests'] = stat_results['tests']
-    except Exception as e:
-        logger.error(f"Statistical tests failed: {e}")
-        import traceback; logger.error(traceback.format_exc())
 
-    # ── Dataset overview ─────────────────────────────────────────────────
-    try:
-        overview_results = run_dataset_overview(datasets, output_dir)
+    overview_results = report.run("dataset_overview",
+                                  run_dataset_overview, datasets, output_dir)
+    if overview_results is not None:
         results['dataset_overview'] = overview_results
-    except Exception as e:
-        logger.error(f"Dataset overview failed: {e}")
-        import traceback; logger.error(traceback.format_exc())
 
-    # ── Between-organoid comparison ──────────────────────────────────────
-    try:
-        between_results = run_between_organoid_tests(datasets, output_dir)
+    between_results = report.run("between_organoid",
+                                 run_between_organoid_tests, datasets, output_dir)
+    if between_results is not None:
         results['between_organoid'] = between_results
-    except Exception as e:
-        logger.error(f"Between-organoid tests failed: {e}")
-        import traceback; logger.error(traceback.format_exc())
 
-    # ── Genotype comparison ──────────────────────────────────────────────
-    try:
-        genotype_results = run_genotype_comparison(datasets, output_dir,
-                                                    mutant_label=mutant_label)
+    genotype_results = report.run("genotype_comparison",
+                                  run_genotype_comparison, datasets, output_dir,
+                                  mutant_label=mutant_label)
+    if genotype_results is not None:
         results['genotype_comparison'] = genotype_results
-    except Exception as e:
-        logger.error(f"Genotype comparison failed: {e}")
-        import traceback; logger.error(traceback.format_exc())
 
     # ── Dev analyses (opt-in via analysis.dev; unsupported) ──────────────
-    # Isolated like every other optional block: an experiment in orcann.dev must
-    # never cost the run its real results. Runs after `results` exists so its
-    # summary can be recorded there.
+    # Isolated like every other stage: an experiment in orcann.dev must never
+    # cost the run its real results. Runs after `results` exists so its summary
+    # can be recorded there.
     if dev:
-        try:
+        def _run_dev():
             from orcann.dev import run_transient_decay
-            results['dev_transient_decay'] = run_transient_decay(
+            return run_transient_decay(
                 datasets, output_dir, deconv_method=deconv_method,
                 k_onset=robust_k_onset,
                 frame_rate=frame_rate_override or 2.0,
                 mutant_label=mutant_label)
-        except Exception as e:
-            logger.warning(f"dev transient decay failed: {e}")
+        dev_results = report.run("dev_transient_decay", _run_dev)
+        if dev_results is not None:
+            results['dev_transient_decay'] = dev_results
+    else:
+        report.skip("dev_transient_decay", "analysis.dev is false")
 
-    # ── Activity analysis ────────────────────────────────────────────────
-    try:
-        activity_results = run_activity_analysis(datasets, output_dir,
-                                                  mutant_label=mutant_label)
+    activity_results = report.run("activity_analysis",
+                                  run_activity_analysis, datasets, output_dir,
+                                  mutant_label=mutant_label)
+    if activity_results is not None:
         results['activity_analysis'] = activity_results
-    except Exception as e:
-        logger.error(f"Activity analysis failed: {e}")
-        import traceback; logger.error(traceback.format_exc())
 
     # ── Core overview figures ────────────────────────────────────────────
-    generate_figures(datasets, X, feat_labels, names, fig_dir)
+    report.run("overview_figures",
+               generate_figures, datasets, X, feat_labels, names, fig_dir)
 
     # ── Single JSON dump at the end ──────────────────────────────────────
+    # The report goes in the file: a reader with only analysis_results.json can
+    # still tell which sections are missing because they failed.
+    results['stage_report'] = report.to_dict()
     with open(json_path, 'w') as f:
         json.dump(results, f, indent=2, default=str)
     logger.info(f"Wrote {json_path}")
+    report.log_summary()
 
     return results

@@ -26,13 +26,13 @@ def run(cfg, force=False):
     ap = cfg.analysis
     if not os.path.isdir(src):
         print(f"analysis: no activity outputs in {src} (run activity first)")
-        return
+        return False
     have = [d for d in os.listdir(src)
             if os.path.isfile(os.path.join(src, d, "data", "temporal_traces.npy"))]
     if not have:
         print(f"analysis: no recordings with temporal_traces.npy in {src} "
               f"(run activity first)")
-        return
+        return False
 
     print(f"analysis: {len(have)} recording(s)  {src} -> {out}")
     results = run_analysis(
@@ -53,8 +53,21 @@ def run(cfg, force=False):
         deconv_method=cfg.deconvolution.method,
         robust_k_onset=cfg.deconvolution.robust_k_onset,
     )
-    if results:
-        print(f"analysis outputs -> {out}/  ({results.get('n_datasets', '?')} datasets)")
-    else:
+    if not results:
         print("analysis: no datasets loaded - check that activity ran and folder "
               "names carry genotype/day (see dataset_features.csv)")
+        return False
+
+    print(f"analysis outputs -> {out}/  ({results.get('n_datasets', '?')} datasets)")
+
+    # A stage that failed leaves its section out of analysis_results.json. Say so
+    # here and report it through the exit code, so a scheduler does not record a
+    # partial run as a clean one.
+    report = results.get("stage_report", {})
+    failed = report.get("failed_stages") or []
+    if failed:
+        print(f"analysis: {len(failed)} stage(s) FAILED: {', '.join(failed)}")
+        print(f"analysis: {out}/data/analysis_results.json is INCOMPLETE "
+              f"(see stage_report in that file for tracebacks)")
+        return False
+    return True

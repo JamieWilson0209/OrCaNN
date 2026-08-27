@@ -121,31 +121,42 @@ def _resolve_config(a):
     return Config.load(path).apply_overrides(a.overrides).resolve_paths()
 
 
-def main(argv=None):
+def main(argv=None) -> int:
+    """Run one stage. Returns a process exit code.
+
+    A stage runner signals failure by returning False; anything else (including
+    None, which the runners that have not adopted the convention still return)
+    counts as success. Raising is also a failure — argparse and the runners let
+    real exceptions through, and the shell sees a traceback and a non-zero code.
+    """
     a = build_parser().parse_args(argv)
     cfg = _resolve_config(a)
     if cfg is None:
-        return
+        return 2
 
     if a.stage == "motion_correction":
         from orcann.pipeline import run_motion_correction
-        run_motion_correction.run(cfg, task_id=a.task_id, force=a.force)
+        ok = run_motion_correction.run(cfg, task_id=a.task_id, force=a.force)
     elif a.stage == "infer":
         from orcann.pipeline import run_infer
-        run_infer.run(cfg, task_id=a.task_id, force=a.force)
+        ok = run_infer.run(cfg, task_id=a.task_id, force=a.force)
     elif a.stage == "segment":
         from orcann.pipeline import run_segment
-        run_segment.run(cfg, task_id=a.task_id, force=a.force, sweeps=a.sweep)
+        ok = run_segment.run(cfg, task_id=a.task_id, force=a.force, sweeps=a.sweep)
     elif a.stage == "activity":
         from orcann.pipeline import run_activity
-        run_activity.run(cfg, task_id=a.task_id, force=a.force)
+        ok = run_activity.run(cfg, task_id=a.task_id, force=a.force)
     elif a.stage == "train_spatial":
         from orcann.pipeline import run_train_spatial
-        run_train_spatial.run(cfg, synthetic=a.synthetic)
+        ok = run_train_spatial.run(cfg, synthetic=a.synthetic)
     elif a.stage == "analysis":
         from orcann.pipeline import run_analysis
-        run_analysis.run(cfg, force=a.force)
+        ok = run_analysis.run(cfg, force=a.force)
+    else:                                    # unreachable: subparser is required
+        return 2
+
+    return 1 if ok is False else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
