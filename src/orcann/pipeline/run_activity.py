@@ -97,9 +97,8 @@ def _compute_dff(cfg, traces):
     """Baseline-correct raw fluorescence traces to dF/F0 per the config."""
     b = cfg.baseline
     fr = cfg.imaging.frame_rate
-    # Validated, not fallen through. Every unrecognised value used to land on
-    # global_dff silently, so a typo — or a config naming a method that no
-    # longer exists — quietly changed how dF/F0 was computed.
+    # Validated rather than dispatched with a default branch: an unrecognised
+    # value must not quietly select a method and change how dF/F0 is computed.
     if b.method in _REMOVED_BASELINE_METHODS:
         raise ValueError(
             f"baseline.method={b.method!r}: "
@@ -207,8 +206,8 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "stage": "activity (baseline + deconvolution)",
         "frame_rate": float(cfg.imaging.frame_rate),
         "indicator": cfg.imaging.indicator,
-        # The AR seed, not a measured decay. decay_time_s is kept as well so
-        # recordings stay readable by code written against the old name.
+        # The AR seed, not a measured transient decay. Written under both names;
+        # decay_time_s is the spelling older readers expect.
         "decay_initialisation_s": cfg.decay_initialisation(),
         "decay_time_s": cfg.decay_initialisation(),
         "dims": [int(H), int(W)],
@@ -245,9 +244,9 @@ def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
         return
     from orcann.activity.roi_adapter import build_seed_view, build_projections
     try:
-        # Inside the try: a labels/projection shape mismatch raised here used to
-        # escape the handler below and kill the whole batch, after this
-        # recording's data folder had already been written.
+        # Inside the try: a labels/projection shape mismatch raises here, and
+        # outside it would escape the handler below and abandon the rest of the
+        # batch after this recording's data had already been written.
         seeds = build_seed_view(labels, max_projection=max_proj, centroids=centroids)
         from orcann.activity.gallery import generate_interactive_gallery
         projections = build_projections(movie, max_projection=max_proj)

@@ -2,16 +2,14 @@
 
 Stages that produce optional outputs — figures, an extra statistical test, a dev
 experiment — are isolated so one failure cannot cost the run its remaining
-results.  That isolation is deliberate and worth keeping.  What it must not do
-is make the failure invisible: before this module, a stage that raised left its
-key absent from ``analysis_results.json``, the file was written anyway, and the
-process still exited 0.  A reader of the output could not tell "this stage found
-nothing to report" from "this stage crashed".
+results.  Isolation alone would hide the failure: a stage that raises leaves its
+key absent from ``analysis_results.json``, which is indistinguishable from a
+stage that ran and found nothing to report.
 
-:class:`StageReport` keeps the isolation and closes that gap.  Every stage is run
-through :meth:`StageReport.run`, which records the outcome either way, so the
-output artefact carries its own provenance and the caller can set an exit code
-from :attr:`StageReport.ok`.
+Every stage runs through :meth:`StageReport.run`, which records the outcome
+either way.  The report is written into the results file, so the artefact
+carries its own provenance, and :attr:`StageReport.ok` gives the caller an exit
+code.
 
 Usage::
 

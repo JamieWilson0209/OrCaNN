@@ -713,7 +713,7 @@ def _panel_quantisation(ax, pooled, genos, colours, labels, quantum, *,
                  loc="left", color=_INK)
     n_distinct = len(np.unique(np.concatenate([pooled[g] for g in genos
                                                if pooled[g].size])))
-    # Left of the last bar, which the right edge of this note used to sit on.
+    # Anchored left of the last bar so the note and the bar do not overlap.
     ax.text(.90, .62, f"{n_distinct} distinct values exist\nin the whole dataset\n"
             f"last bar pools \u2265{top:g} s", transform=ax.transAxes, ha="right",
             va="top", fontsize=7.5, color=_MUTED, linespacing=1.4)

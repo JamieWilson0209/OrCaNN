@@ -81,8 +81,9 @@ def deconvolve_traces(
         recording; a trace whose solve fails is recorded in ``trace_rejected``
         and carries no spike measurement. Substituting a different detector was
         removed deliberately — it produced numbers indistinguishable from real
-        results, and the peak detector formerly used reported 4,951 spikes on a
-        silent ROI with ordinary photobleaching drift.
+        results. The alternative detectors differ enough in event count and
+        amplitude scale that a substituted recording is not comparable with the
+        rest of a cohort.
     optimize_g : bool
         Whether OASIS should optimise the AR coefficient from data.
     noise_method : str
@@ -138,29 +139,16 @@ def deconvolve_traces(
                 'trace_rejected': np.zeros(N, bool), 'n_traces_rejected': 0,
                 'C_dff': empty}
 
-    # C is ΔF/F₀ by contract — run_activity._compute_dff converts before calling,
-    # and it is the only caller. This used to run _ensure_dff, which inferred the
-    # units from np.median(C) > 1.0 and converted if it decided they were raw.
-    # That inference had no correct case here (the input is always already
-    # converted) and three wrong ones: any NaN made the median NaN, and
-    # `nan <= 1.0` is False, so one bad sample sent the whole matrix through a
-    # second baseline correction; raw data normalised to [0, 1] passed as ΔF/F₀
-    # with its photobleaching intact; and a genuine ΔF/F₀ trace with median > 1
-    # was detrended twice, costing ~30% of event amplitude. It also hardcoded
-    # baseline settings that ignored the config.
-    #
-    # Checked rather than inferred: a contract violation is loud, and nothing is
-    # silently rescaled either way.
+    # C must already be ΔF/F₀; callers convert with baseline.compute_dff_traces.
+    # Checked below, never inferred from the data: raw fluorescence normalised to
+    # [0, 1] is indistinguishable from ΔF/F₀ by any statistic of the values.
     C_dff = np.asarray(C, dtype=np.float32)
 
-    # NaN or Inf in a trace is an upstream error — a dead pixel in the ROI, a
-    # division by a zero baseline, a corrupt frame — not a measurement. Such a
-    # trace is rejected rather than deconvolved: every estimator here propagates
-    # non-finite values silently (_mad_noise returns NaN, `trace > threshold` is
-    # all-False, OASIS's solver produces garbage or raises), so the result would
-    # be an ROI reported as silent with no way to tell it apart from a genuinely
-    # quiet one. Rejected rows are zeroed, counted, and flagged in the result so
-    # downstream can exclude them instead of scoring them as inactive.
+    # A non-finite sample means a dead pixel, a zero baseline or a corrupt frame:
+    # an upstream error, not a measurement. Reject the whole trace rather than
+    # deconvolve it — every estimator here absorbs NaN silently (_mad_noise
+    # returns NaN, `trace > threshold` is all-False) and would report the ROI as
+    # quiet, which is indistinguishable from a genuinely silent cell.
     trace_ok = np.isfinite(C_dff).all(axis=1)
     trace_rejected = ~trace_ok
     n_rejected = int(trace_rejected.sum())
@@ -195,13 +183,10 @@ def deconvolve_traces(
                 f"median={np.median(C_dff):.4f}")
 
     if method == 'oasis':
-        # OASIS *is* CaImAn's constrained_foopsi, so this method cannot run
-        # without it. Checked up front, and never swallowed by the fallback
-        # below: an absent dependency is a configuration error, not a numerical
-        # one, and silently substituting a different detection method would
-        # change the results while the run still reported success. This is
-        # exactly what used to happen when the activity stage was run in the
-        # torch env instead of the caiman env.
+        # OASIS is CaImAn's constrained_foopsi, so the method cannot run without
+        # it. Checked before any work: a missing dependency is a configuration
+        # error, and the usual cause is running the activity stage in the torch
+        # env rather than the caiman one.
         try:
             from caiman.source_extraction.cnmf.deconvolution import (  # noqa: F401
                 constrained_foopsi)
@@ -227,12 +212,9 @@ def deconvolve_traces(
             # problem as it being absent — do not degrade to another method.
             raise
         except Exception as e:
-            # No fallback. Substituting a different detector for the whole
-            # recording produced numbers that looked like results and were not:
-            # the peak detector this used to fall back to reported 4,951 spikes
-            # on a silent ROI with ordinary photobleaching drift, against a truth
-            # of zero. For this data a failed run that says so is worth more than
-            # a completed one that quietly changed method.
+            # Fail rather than substitute a detector. Detectors differ in event
+            # count and amplitude scale, so a recording quietly deconvolved by a
+            # different one is not comparable with the rest of a cohort.
             raise RuntimeError(
                 f"OASIS deconvolution failed for this recording: {e}. No "
                 f"fallback detector is applied — rerun with "
@@ -275,11 +257,9 @@ def deconvolve_traces(
             f"Unknown deconvolution method: {method!r}. Valid values: "
             f"'oasis', 'robust'.")
 
-    # Every path must expose the same keys: the safety net's
-    # `if not empty.any(): return` skipped creating this, so consumers hit
-    # KeyError on data-dependent runs. 0 is meaningful
-    # here, not a placeholder — OASIS zeroes S[:, :edge_frames] and
-    # S[:, -edge_frames:], so a fitted ROI has no boundary event by construction.
+    # Every method returns the same keys, so consumers never branch on presence.
+    # Zero is a real value here: OASIS clears S within edge_frames of both ends,
+    # so a fitted ROI has no boundary-touching event by construction.
     if 'n_spikes_censored' not in result:
         result['n_spikes_censored'] = np.zeros(N, dtype=np.int32)
     result.setdefault('n_spikes_rescued', 0)
@@ -304,16 +284,13 @@ def deconvolve_traces(
 
 
 # ── Shared detector policy ───────────────────────────────────────────────────
-# The OASIS path applies two guards after fitting: it zeroes spikes within
-# EDGE_SECONDS of either end (baseline estimation is unreliable there), and it
-# rejects any trace whose elevation lasts longer than MAX_TRANSIENT_SECONDS
-# (a loading artefact or a non-neuronal signal, not a calcium event). Both live
-# here so the robust detector and the safety net apply the same policy rather
-# than a different one — previously the safety net selected exactly the ROIs
-# those guards had emptied and refilled them, defeating both.
+# Two guards every detector applies, defined once so they cannot diverge:
+# spikes within EDGE_SECONDS of either end are dropped (baseline estimation is
+# unreliable there), and a trace elevated for longer than MAX_TRANSIENT_SECONDS
+# is rejected as a loading artefact rather than a calcium event.
 
-# A ΔF/F₀ median far from 0 means the caller passed something else. Generous:
-# real recordings measured here sit near 0.0004-0.08.
+# A ΔF/F₀ median this far from 0 means the caller passed something other than
+# ΔF/F₀. Deliberately loose: real recordings sit near 0.0004-0.08.
 _DFF_MEDIAN_SANITY = 5.0
 
 EDGE_SECONDS = 0.5
@@ -368,13 +345,12 @@ def detector_baseline(trace: np.ndarray, frame_rate: float, percentile: float,
                       max_window: int) -> np.ndarray:
     """Per-frame baseline for the robust detector, using the configured method.
 
-    The detector used to reference a single global ``np.median(trace)``. That
-    fails in both directions: a drifting trace spends its later half above the
-    median and is chopped into phantom events, while an ROI elevated for more
-    than half the recording pulls the median up with it and goes silent. The
-    same rolling percentile the activity stage uses for dF/F0 tracks drift and
-    is unmoved by sustained activity, so the detector and the baseline stage
-    now agree on what "resting" means.
+    The same rolling percentile the activity stage uses for ΔF/F₀, so detector
+    and baseline stage agree on what "resting" means. A single whole-trace
+    statistic fails in both directions here: a drifting trace spends its later
+    half above its own median and is chopped into phantom events, and an ROI
+    active across more than half the recording pulls that median up with it and
+    reads as silent.
     """
     from scipy import ndimage
     from orcann.activity.baseline import _adaptive_window
@@ -502,10 +478,9 @@ def _deconvolve_oasis(
             # s_min tells OASIS to zero any spike whose reconstructed amplitude is
             # below it (in ΔF/F₀).  On some traces (typically broad, high-amplitude
             # transients) the hard s_min constraint makes the solve infeasible and
-            # constrained_foopsi raises.  Rather than dropping straight to crude
-            # peak detection — which silently loses obvious transients (e.g. a 20σ
-            # event) — first retry with s_min=0, letting OASIS place spikes without
-            # the floor.  This recovers a proper deconvolution for most "failures".
+            # constrained_foopsi raises.  Retry once with s_min=0, letting OASIS
+            # place spikes without the floor; this recovers a proper
+            # deconvolution for most such failures.
             try:
                 c, bl, c1, g, sn, sp, lam = _foopsi(trace, s_min)
             except Exception:
@@ -522,11 +497,9 @@ def _deconvolve_oasis(
             n_success += 1
 
         except Exception as e:
-            # Both OASIS attempts failed. The trace is recorded as failed, not
-            # handed to a different detector: a substituted result is
-            # indistinguishable from a real one downstream, and the peak
-            # detector formerly used here fabricated spikes on noise. Zeroed so
-            # nothing reads it as a measurement.
+            # Both attempts failed. Record the trace as failed and zero it;
+            # a result from a substituted detector would be indistinguishable
+            # from a real one downstream.
             C_denoised[i] = 0.0
             S[i] = 0.0
             noise_levels[i] = _mad_noise(trace)
@@ -707,8 +680,8 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s,
     S = np.zeros(T, dtype=np.float32)
     if noise <= 0 or not np.isfinite(noise):
         return S, 0, 0
-    # Per-frame baseline from the configured method (see detector_baseline).
-    # None keeps the old global-median behaviour for direct callers.
+    # Per-frame baseline (see detector_baseline). None falls back to the trace
+    # median, which only suits a trace with no drift and no sustained activity.
     base = (np.full(T, float(np.median(trace))) if baseline is None
             else np.asarray(baseline, dtype=np.float64))
     onset = base + k_onset * noise
@@ -731,16 +704,10 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s,
             pk = i + int(np.argmax(seg))
             S[pk] = float(trace[pk] - base[pk])
             n_events += 1
-            # An excursion touching either end of the trace is censored. Right
-            # (j == T): the event began inside the window but had not finished,
-            # so its duration is unknown and its peak may lie beyond the trace.
-            # Left (i == 0): it was already under way at frame 0, so its onset
-            # is outside the recording entirely and counting it inflates the
-            # rate. The two are not equivalent and only the right-censored case
-            # clearly belongs in a rate. Both are kept and counted rather than
-            # dropped, because excluding real events is a scientific decision,
-            # not an engineering one — but the count is what lets the caller
-            # make it. In both cases the amplitude in S is a lower bound.
+            # Censored: the excursion is cut off by the trace boundary, so its
+            # duration is unknown and its amplitude here is a lower bound. Left
+            # (i == 0) is the weaker case — its onset lies outside the recording.
+            # Counted, not dropped: whether to exclude them is the caller's call.
             if i == 0 or j == T:
                 n_censored += 1
         i = j

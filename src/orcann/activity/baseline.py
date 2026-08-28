@@ -6,13 +6,11 @@ Converts raw fluorescence traces to ΔF/F₀ using a rolling low-percentile
 baseline: a per-trace rolling 8th-percentile F₀, the same family of approach as
 Suite2p and CaImAn's ``detrend_df_f``.
 
-A second method, ``local_background``, was removed. It took a tissue-masked
-annulus around each ROI as a local F₀(t), and the motivation — bright organoid
-tissue surrounded by dark medium — is real. The implementation was not: it was
-inherited from the calcium pipeline, was never callable in OrCaNN, and built its
-tissue mask with Otsu, the classical thresholding that OrCaNN's learned
-segmenter replaced. Rebuilding the idea against the segmenter's own cellness map
-would be a new piece of work, not a repair.
+A per-ROI local F₀, taken from a tissue-masked annulus, would suit this data
+better — bright organoid tissue surrounded by dark medium is exactly the case a
+whole-trace percentile handles poorly. It is not implemented here. Building it
+against the segmenter's own cellness map, rather than an intensity threshold,
+is the sensible route.
 
 These operate on extracted traces (N × T), not on the movie itself.
 Movie-level preprocessing (motion correction) is handled separately.
@@ -144,13 +142,11 @@ def _rolling_baseline(
             trace, percentile, size=window, mode='reflect',
         )
 
-    # Floor at 1% of the trace's own median, to keep the ΔF/F₀ division
-    # well-conditioned for dim ROIs. Scale-relative by construction: the floor
-    # was previously max(median * 0.01, 1.0), and that absolute 1.0 dominated
-    # for any trace whose values sit below ~100 — pinning F₀ to a constant and
-    # inverting the sign of every transient. See the module docstring: the
-    # remaining question of what ΔF/F₀ should mean when F₀ genuinely approaches
-    # zero is open, and this guard does not answer it.
+    # Floor at 1% of the trace's own median, keeping the ΔF/F₀ division
+    # well-conditioned for dim ROIs. Relative rather than absolute, so a trace in
+    # raw counts and the same trace scaled to [0, 1] get proportional floors —
+    # ΔF/F₀ is a ratio and must not depend on the units of its input.
+    # This is a guard, not an answer; see "F₀ near zero" in the module docstring.
     positive = trace[trace > 0]
     if positive.size:
         np.maximum(baseline, float(np.median(positive)) * 0.01, out=baseline)

@@ -102,9 +102,9 @@ def run_statistical_tests(datasets: List[DatasetMetrics], output_dir: str) -> di
 
     # ── Kruskal-Wallis ───────────────────────────────────────────────────
     kw_result = None
-    # Drop groups too small to test rather than abandoning the test entirely — a
-    # single 1-neuron recording used to suppress it for the whole dataset with no
-    # reason recorded. Matches the handling in _run_tests.
+    # Drop groups too small to test rather than abandoning the test entirely: one
+    # recording with a single active neuron should not silence the whole dataset.
+    # Matches the handling in _run_tests.
     kw_valid = [r for r in per_ds_rates if len(r) >= 2]
     if len(kw_valid) >= 2:
         H, p_kw = sp_stats.kruskal(*kw_valid)
@@ -982,10 +982,8 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
 
     global_path = os.path.join(geno_dir, 'genotype_activity_combined.png')
 
-    # (Within-day breakdown figure removed. Its `paired_days` guard could never
-    # be true — the success path never set a top-level 'skipped' key — so the
-    # plot was never produced in any run. The per-day results it would have
-    # drawn are still recorded in results['tests']['within_day'].)
+    # (No within-day breakdown figure. The per-day results are recorded in
+    # results['tests']['within_day'] for anyone who wants to plot them.)
 
     # ── Figure 4: Meta-analysis forest plot ──────────────────────────────
     if len(day_effect_sizes) >= 2:
@@ -1872,10 +1870,10 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
                         movie = np.load(movie_path).astype(np.float32)
                     else:
                         raise ValueError(f"unsupported movie format {ext!r}")
-                    # Normalise to (T, H, W) here, where the failure is still
-                    # inside this try. A 4-D stack or a single 2-D frame used to
-                    # reach `_, mh, mw = movie.shape` further down, outside any
-                    # handler, and take every remaining dataset's figures with it.
+                    # Normalise to (T, H, W) inside this try. A 4-D stack or a
+                    # single 2-D frame otherwise reaches the shape unpacking
+                    # below, which sits outside any handler and would abandon
+                    # every remaining dataset's figures.
                     if movie.ndim == 4:
                         movie = movie[:, 0]
                     elif movie.ndim == 2:

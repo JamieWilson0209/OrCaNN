@@ -269,26 +269,19 @@ def load_dataset_metrics(
     raw_fluor_path = result_path / 'data' / 'temporal_traces_raw.npy'
     C_raw_fluorescence = np.load(raw_fluor_path) if raw_fluor_path.exists() else None
 
-    # Check which amplitude method was used for this dataset
-    # How spike amplitudes are measured depends on how the pipeline computed
-    # ΔF/F, so this is not a cosmetic setting: 'direct'/'local_dff' measure each
-    # event from raw fluorescence, the others from corrected traces. Falling back
-    # silently means one recording's amplitudes are computed differently from its
-    # neighbours' and the comparison pools two definitions. The fallback stays
-    # (one unreadable file should not lose the recording), but it is announced,
-    # and the resolved value is recorded on the dataset so mixed-method
-    # comparisons can be detected downstream.
+    # Which method measured this recording's spike amplitudes. Not cosmetic:
+    # 'direct' measures each event from raw fluorescence, 'global_dff' from
+    # corrected traces, so a cohort mixing the two pools two definitions.
+    # The default is announced when it is used, and recorded on the dataset so
+    # the mix is detectable rather than assumed.
     _AMP_DEFAULT = 'global_dff'
     amplitude_method = _AMP_DEFAULT
     deconv_method = 'unknown'
     amplitude_method_resolved = 'default'      # 'file' | 'default' | 'fallback'
 
-    # run_info.json is what the activity stage writes. pipeline_results.json is
-    # the calcium pipeline's name for the same thing and nothing in OrCaNN has
-    # ever written it — reading only that name meant this block always took the
-    # fallback path and the recorded method was always the default, whatever the
-    # run actually did. Both are tried, newest first, so pre-OrCaNN recordings
-    # still load.
+    # run_info.json is what the activity stage writes; pipeline_results.json is
+    # the calcium pipeline's name for the same file. Both are tried, current name
+    # first, so recordings from either pipeline load.
     for _meta_path in (result_path / 'run_info.json',
                        result_path / 'pipeline_results.json'):
         if not _meta_path.exists():
@@ -567,9 +560,8 @@ def load_dataset_metrics(
     # Spike amplitudes — method depends on how the activity stage computed ΔF/F:
     #   direct: measure each event as local ΔF/F from raw fluorescence
     #   global_dff: measure from corrected traces
-    # The tuple also matches two historical values, so recordings processed
-    # before local_background was removed (and before 'local_dff' was renamed)
-    # still load and are still classified the way they were computed.
+    # 'local_dff' is a historical spelling; matching it keeps older recordings
+    # classified the way they were actually computed.
     _use_local = amplitude_method in ('direct', 'local_dff')
     _amp_raw = R_fluor_sel if _use_local else None
     all_amps = _measure_transient_amplitudes(

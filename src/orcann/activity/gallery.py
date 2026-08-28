@@ -59,9 +59,9 @@ def array_to_base64_png(arr: np.ndarray, cmap: str = 'gray', vmin: float = None,
     from PIL import Image
     
     # Normalize array
-    # nanpercentile + a NaN fill: np.percentile returns NaN if any element is
-    # NaN, which made arr_norm all-NaN and the colormap paint the entire image
-    # its "bad" colour — a solid black frame with contours drawn on top.
+    # nanpercentile, then fill: np.percentile returns NaN if any element is NaN,
+    # which would make arr_norm all-NaN and paint the whole image the colormap's
+    # "bad" colour — a solid black frame with ROI contours drawn over it.
     finite = np.isfinite(arr)
     if vmin is None:
         vmin = np.nanpercentile(arr, 1) if finite.any() else 0.0
@@ -277,8 +277,8 @@ def generate_interactive_gallery(
         'truncated': seeds.n_seeds - len(roi_data),
         'with_contours': int(seeds.contour_success.sum()),
         'fallback': int((~seeds.contour_success).sum()),
-        # A recording where segmentation found nothing used to raise here, on a
-        # summary line, and lose the whole gallery.
+        # Guarded: reductions over an empty radii array raise, and a recording
+        # where segmentation found nothing would lose its whole gallery to it.
         'median_radius': float(np.median(seeds.radii)) if _has_radii else 0.0,
         'radius_range': ([float(seeds.radii.min()), float(seeds.radii.max())]
                          if _has_radii else [0.0, 0.0]),
@@ -870,8 +870,8 @@ def generate_interactive_gallery(
         }}
         
         // NOTE: resize is handled once, near the end of this script, by
-        // updateTransform(). A second listener here used to call fitToView(),
-        // which resets zoom and pan, so every resize threw away the user's view.
+        // updateTransform(). Do not add a fitToView() call here: it resets zoom
+        // and pan, so every resize would discard the user's current view.
         
         function getVisibleRois() {{
             return roiData.filter(roi => {{
