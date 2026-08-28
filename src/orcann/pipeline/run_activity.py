@@ -125,10 +125,14 @@ def _compute_dff(cfg, traces):
 def _deconvolve(cfg, c_dff):
     """OASIS spike inference on dF/F0 traces.
 
-    Returns (denoised, spikes, noise, censored, method_used).
+    Returns (denoised, spikes, noise, censored, rejected, method_used).
 
     ``censored`` is the per-ROI count of detected events touching a trace
     boundary, whose duration is unknown and whose amplitude is a lower bound.
+
+    ``rejected`` is the per-ROI boolean flag for traces excluded because they
+    contained NaN or Inf. Those ROIs were never deconvolved, so their zero spike
+    count is not a measurement and must not be read as a silent ROI.
 
     ``method_used`` is what actually ran, which is not always what was asked
     for: if the OASIS solver raises, deconvolve_traces falls back to the
@@ -137,7 +141,7 @@ def _deconvolve(cfg, c_dff):
     not comparable — and the fallback is otherwise silent.
     """
     if not cfg.deconvolution.enabled:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     from orcann.activity.deconvolution import deconvolve_traces
     d = cfg.deconvolution
     res = deconvolve_traces(
@@ -154,12 +158,17 @@ def _deconvolve(cfg, c_dff):
         baseline_window_fraction=cfg.baseline.window_fraction,
         baseline_min_window=cfg.baseline.min_window,
         baseline_max_window=cfg.baseline.max_window)
+    n_rej = int(res.get("n_traces_rejected") or 0)
+    if n_rej:
+        print(f"  WARNING: {n_rej} ROI(s) rejected for non-finite trace values "
+              f"- see deconv_rejected.npy")
     return (res.get("C_denoised"), res.get("S"), res.get("noise"),
-            res.get("n_spikes_censored"), res.get("method"))
+            res.get("n_spikes_censored"), res.get("trace_rejected"),
+            res.get("method"))
 
 
 def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
-                   noise, censored, deconv_used, labels, mean_proj, max_proj, source,
+                   noise, censored, rejected, deconv_used, labels, mean_proj, max_proj, source,
                    motion=None, motion_shifts=None, global_intensity=None):
     """Write the calcium-format per-recording folder + run_info.json."""
     from orcann.activity.roi_adapter import footprints_from_labels
@@ -178,6 +187,10 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         np.save(os.path.join(data, "deconv_noise.npy"), np.asarray(noise, np.float32))
     if censored is not None:
         np.save(os.path.join(data, "deconv_censored.npy"), np.asarray(censored, np.int32))
+    if rejected is not None:
+        # Which ROIs were never deconvolved. Their zero spike counts are absent
+        # measurements, not silent cells, and the analysis must not pool them.
+        np.save(os.path.join(data, "deconv_rejected.npy"), np.asarray(rejected, bool))
     if max_proj is not None:
         np.save(os.path.join(data, "max_projection.npy"), max_proj.astype(np.float32))
     np.save(os.path.join(data, "mean_projection.npy"), mean_proj.astype(np.float32))
@@ -208,6 +221,8 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "deconvolution": {"enabled": cfg.deconvolution.enabled,
                           "method": cfg.deconvolution.method,
                           "method_used": deconv_used,
+                          "n_traces_rejected": (0 if rejected is None
+                                                else int(np.asarray(rejected).sum())),
                           "method_fallback": bool(
                               deconv_used is not None
                               and deconv_used != cfg.deconvolution.method)},
@@ -287,12 +302,13 @@ def run(cfg, task_id=None, force=False):
             logger.warning(f"  global intensity diagnostic failed: {e}")
 
         c_dff, c_raw = _compute_dff(cfg, traces)
-        denoised, spikes, noise, censored, deconv_used = _deconvolve(cfg, c_dff)
+        denoised, spikes, noise, censored, rejected, deconv_used = _deconvolve(cfg, c_dff)
 
         motion, motion_shifts = _motion_meta(mv)
         _write_outputs(out_dir, rec_id, cfg, c_dff=c_dff, c_raw=c_raw,
                        denoised=denoised, spikes=spikes, noise=noise,
-                       censored=censored, deconv_used=deconv_used,
+                       censored=censored, rejected=rejected,
+                       deconv_used=deconv_used,
                        labels=labels, mean_proj=mean_proj, max_proj=max_proj,
                        source=mv, motion=motion, motion_shifts=motion_shifts,
                        global_intensity=gi)

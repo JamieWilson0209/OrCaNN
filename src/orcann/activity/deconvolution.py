@@ -160,6 +160,8 @@ def deconvolve_traces(
         'g'           : (N, p)  — AR coefficients per neuron
         'method'      : str     — method used
         'n_spikes'    : (N,)    — number of inferred spikes per neuron
+        'trace_rejected'    : (N,) bool — traces excluded for non-finite values
+        'n_traces_rejected' : int — how many, also logged at ERROR
         'n_spikes_censored' : (N,) — of those, how many touch a trace boundary
         'n_spikes_rescued'  : int  — ROIs backfilled by the safety net (oasis only)
         'C_dff'       : (N, T)  — ΔF/F₀ input used for deconvolution
@@ -181,7 +183,9 @@ def deconvolve_traces(
                 'g': np.zeros((N, 1), np.float32), 'method': method,
                 'n_spikes': np.zeros(N, np.int32),
                 'n_spikes_censored': np.zeros(N, np.int32),
-                'n_spikes_rescued': 0, 'C_dff': empty}
+                'n_spikes_rescued': 0,
+                'trace_rejected': np.zeros(N, bool), 'n_traces_rejected': 0,
+                'C_dff': empty}
 
     # C is ΔF/F₀ by contract — run_activity._compute_dff converts before calling,
     # and it is the only caller. This used to run _ensure_dff, which inferred the
@@ -197,7 +201,34 @@ def deconvolve_traces(
     # Checked rather than inferred: a contract violation is loud, and nothing is
     # silently rescaled either way.
     C_dff = np.asarray(C, dtype=np.float32)
-    _median = float(np.nanmedian(C_dff)) if np.isfinite(C_dff).any() else float("nan")
+
+    # NaN or Inf in a trace is an upstream error — a dead pixel in the ROI, a
+    # division by a zero baseline, a corrupt frame — not a measurement. Such a
+    # trace is rejected rather than deconvolved: every estimator here propagates
+    # non-finite values silently (_mad_noise returns NaN, `trace > threshold` is
+    # all-False, OASIS's solver produces garbage or raises), so the result would
+    # be an ROI reported as silent with no way to tell it apart from a genuinely
+    # quiet one. Rejected rows are zeroed, counted, and flagged in the result so
+    # downstream can exclude them instead of scoring them as inactive.
+    trace_ok = np.isfinite(C_dff).all(axis=1)
+    trace_rejected = ~trace_ok
+    n_rejected = int(trace_rejected.sum())
+    if n_rejected:
+        bad = np.flatnonzero(trace_rejected)
+        shown = ", ".join(str(int(i)) for i in bad[:10])
+        more = f" (+{len(bad) - 10} more)" if len(bad) > 10 else ""
+        n_nan = int(np.isnan(C_dff[trace_rejected]).sum())
+        n_inf = int(np.isinf(C_dff[trace_rejected]).sum())
+        logger.error(
+            f"  REJECTED {n_rejected}/{N} trace(s) containing non-finite values "
+            f"({n_nan} NaN, {n_inf} Inf) — ROI index: {shown}{more}. These are "
+            f"upstream errors, not silent ROIs; they are excluded from "
+            f"deconvolution and flagged as rejected in the result.")
+        C_dff = C_dff.copy()
+        C_dff[trace_rejected] = 0.0
+
+    _median = (float(np.nanmedian(C_dff[trace_ok])) if trace_ok.any()
+               else float("nan"))
     if not np.isfinite(_median) or abs(_median) > _DFF_MEDIAN_SANITY:
         logger.warning(
             f"  Trace median is {_median:.4g}, which does not look like ΔF/F₀ "
@@ -285,6 +316,16 @@ def deconvolve_traces(
     if 'n_spikes_censored' not in result:
         result['n_spikes_censored'] = np.zeros(N, dtype=np.int32)
     result.setdefault('n_spikes_rescued', 0)
+    # A rejected trace was never deconvolved; make sure nothing downstream reads
+    # its zeros as a measurement.
+    if n_rejected:
+        for k in ('S', 'C_denoised'):
+            if k in result and result[k] is not None:
+                result[k][trace_rejected] = 0.0
+        result['n_spikes'][trace_rejected] = 0
+        result['n_spikes_censored'][trace_rejected] = 0
+    result['trace_rejected'] = trace_rejected
+    result['n_traces_rejected'] = n_rejected
     result['C_dff'] = C_dff
     return result
 
