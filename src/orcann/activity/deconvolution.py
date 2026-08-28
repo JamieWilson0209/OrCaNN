@@ -23,7 +23,6 @@ References:
 import os
 import numpy as np
 
-from orcann.activity.baseline import compute_dff_traces
 import logging
 from typing import Tuple, Optional, Dict, List
 
@@ -112,9 +111,10 @@ def deconvolve_traces(
     Parameters
     ----------
     C : array (N, T)
-        Trace matrix (raw fluorescence or ΔF/F₀).  If traces appear to be
-        raw fluorescence (median > 1), they are automatically converted to
-        ΔF/F₀ before deconvolution.
+        Trace matrix, **ΔF/F₀** (N, T).  Not raw fluorescence: convert with
+        :func:`orcann.activity.baseline.compute_dff_traces` first, as
+        ``run_activity._compute_dff`` does.  ``s_min`` and ``noise_gate_sigma``
+        are both in ΔF/F₀ units, so raw input silently changes what they mean.
     frame_rate : float
         Sampling rate in Hz.
     decay_time : float
@@ -183,7 +183,29 @@ def deconvolve_traces(
                 'n_spikes_censored': np.zeros(N, np.int32),
                 'n_spikes_rescued': 0, 'C_dff': empty}
 
-    C_dff = _ensure_dff(C, frame_rate)
+    # C is ΔF/F₀ by contract — run_activity._compute_dff converts before calling,
+    # and it is the only caller. This used to run _ensure_dff, which inferred the
+    # units from np.median(C) > 1.0 and converted if it decided they were raw.
+    # That inference had no correct case here (the input is always already
+    # converted) and three wrong ones: any NaN made the median NaN, and
+    # `nan <= 1.0` is False, so one bad sample sent the whole matrix through a
+    # second baseline correction; raw data normalised to [0, 1] passed as ΔF/F₀
+    # with its photobleaching intact; and a genuine ΔF/F₀ trace with median > 1
+    # was detrended twice, costing ~30% of event amplitude. It also hardcoded
+    # baseline settings that ignored the config.
+    #
+    # Checked rather than inferred: a contract violation is loud, and nothing is
+    # silently rescaled either way.
+    C_dff = np.asarray(C, dtype=np.float32)
+    _median = float(np.nanmedian(C_dff)) if np.isfinite(C_dff).any() else float("nan")
+    if not np.isfinite(_median) or abs(_median) > _DFF_MEDIAN_SANITY:
+        logger.warning(
+            f"  Trace median is {_median:.4g}, which does not look like ΔF/F₀ "
+            f"(expected |median| <= {_DFF_MEDIAN_SANITY}). deconvolve_traces "
+            f"requires ΔF/F₀; pass traces through "
+            f"orcann.activity.baseline.compute_dff_traces first. Continuing, but "
+            f"s_min and the noise gate are in ΔF/F₀ units and will not mean what "
+            f"they say.")
 
     logger.info(f"Deconvolution: method={method}, {N} traces, "
                 f"decay={decay_time}s, frame_rate={frame_rate} Hz")
@@ -275,6 +297,10 @@ def deconvolve_traces(
 # here so the robust detector and the safety net apply the same policy rather
 # than a different one — previously the safety net selected exactly the ROIs
 # those guards had emptied and refilled them, defeating both.
+
+# A ΔF/F₀ median far from 0 means the caller passed something else. Generous:
+# real recordings measured here sit near 0.0004-0.08.
+_DFF_MEDIAN_SANITY = 5.0
 
 EDGE_SECONDS = 0.5
 MAX_TRANSIENT_SECONDS = 80.0
@@ -406,45 +432,6 @@ def _apply_safety_net(result, C_dff, frame_rate, decay_time,
                     f"duration gate rejects them")
     result['n_spikes_rescued'] = n_rescued
     return result
-
-
-def _ensure_dff(C: np.ndarray, frame_rate: float) -> np.ndarray:
-    """
-    Ensure traces are ΔF/F₀ for OASIS deconvolution.
-
-    If data is raw fluorescence (median > 1.0): apply the standard
-    rolling-percentile baseline correction (delegates to
-    :func:`orcann.activity.baseline.compute_dff_traces` so there is one canonical
-    implementation).
-
-    If data is already ΔF/F₀ (median ≤ 1.0): pass through without
-    modification.  OASIS internally estimates its own baseline (the `bl`
-    parameter in constrained_foopsi), so additional baseline subtraction
-    here can interfere with its estimation and degrade spike detection.
-    """
-    median_val = np.median(C)
-
-    if median_val <= 1.0:
-        logger.info(f"  Traces appear to be ΔF/F₀ already (median={median_val:.4f})")
-        logger.info(f"  Passing through without baseline adjustment — "
-                    f"OASIS will estimate its own baseline internally")
-        return C.copy().astype(np.float32)
-
-    logger.info(f"  Traces appear to be raw fluorescence (median={median_val:.1f}), "
-                f"converting to ΔF/F₀...")
-
-    C_dff, _, _ = compute_dff_traces(
-        C, frame_rate=frame_rate,
-        percentile=8.0,
-        window_fraction=0.25,
-        min_window=50, max_window=500,
-        edge_trim=False,
-    )
-
-    logger.info(f"  Converted: range [{C_dff.min():.4f}, {C_dff.max():.4f}], "
-                f"median={np.median(C_dff):.4f}")
-
-    return C_dff.astype(np.float32)
 
 
 def _deconvolve_oasis(
