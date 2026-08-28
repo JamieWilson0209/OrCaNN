@@ -145,7 +145,7 @@ def _deconvolve(cfg, c_dff):
     d = cfg.deconvolution
     res = deconvolve_traces(
         c_dff, frame_rate=cfg.imaging.frame_rate, decay_time=cfg.decay_time(),
-        method=d.method, penalty=d.penalty, optimize_g=d.optimize_g,
+        method=d.method, optimize_g=d.optimize_g,
         noise_method=d.noise_method, s_min=d.s_min,
         noise_gate_sigma=d.noise_gate_sigma,
         robust_safety_net=d.robust_safety_net,

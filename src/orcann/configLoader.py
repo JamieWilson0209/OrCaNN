@@ -80,7 +80,6 @@ class DeconvolutionParams:
     method: str = "oasis"             # oasis | robust
     decay_time: Optional[float] = None  # seconds; null resolves from imaging.indicator
     optimize_g: bool = True
-    penalty: float = 0.0              # L1 sparsity; 0 = auto-tune (recommended for OASIS)
     noise_method: str = "mean"        # mean | median | logmexp
     s_min: float = 0.1                # min spike amplitude in dF/F0 (OASIS suppresses below this)
     noise_gate_sigma: float = 3.5     # keep only spikes above this multiple of the trace noise floor
@@ -366,7 +365,6 @@ _FIELD_DOC = {
     "deconvolution.enabled": "run OASIS spike inference (false = skip; analysis then has no spikes)",
     "deconvolution.decay_time": "indicator decay time in s (null = resolve from imaging.indicator)",
     "deconvolution.optimize_g": "let OASIS fit the AR coefficient from data",
-    "deconvolution.penalty": "L1 sparsity penalty; 0 = auto-tune (recommended for OASIS)",
     "deconvolution.noise_method": "OASIS noise estimator: mean | median | logmexp",
     "deconvolution.s_min": "min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)",
     "deconvolution.noise_gate_sigma": "keep only spikes exceeding this multiple of the trace noise floor (0 = no gate)",

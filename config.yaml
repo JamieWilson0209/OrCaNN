@@ -47,7 +47,6 @@ deconvolution:
   method: "oasis"             # oasis (AR deconvolution) | robust (deterministic transient detector). No fallback between them: a failure fails the run.
   decay_time: null            # indicator decay time in s (null = resolve from imaging.indicator)
   optimize_g: true            # let OASIS fit the AR coefficient from data
-  penalty: 0.0                # L1 sparsity penalty; 0 = auto-tune (recommended for OASIS)
   noise_method: "mean"        # OASIS noise estimator: mean | median | logmexp
   s_min: 0.1                  # min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)
   noise_gate_sigma: 3.5       # keep only spikes exceeding this multiple of the trace noise floor (0 = no gate)

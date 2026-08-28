@@ -33,55 +33,6 @@ logger = logging.getLogger(__name__)
 # TEMPORAL FILTERING
 # =============================================================================
 
-def temporal_filter(
-    C: np.ndarray,
-    frame_rate: float,
-    cutoff_hz: float = 2.0,
-    order: int = 3,
-) -> np.ndarray:
-    """
-    Low-pass Butterworth filter for calcium traces.
-
-    Parameters
-    ----------
-    C : array (N, T)
-        Trace matrix.
-    frame_rate : float
-        Sampling rate in Hz.
-    cutoff_hz : float
-        Cutoff frequency in Hz (default 2.0).  For Fluo-4 (τ≈400ms) at
-        2 Hz, real transient content is below ~2 Hz.
-    order : int
-        Filter order (default 3).
-
-    Returns
-    -------
-    C_filtered : array (N, T)
-    """
-    from scipy.signal import butter, sosfiltfilt
-
-    nyquist = frame_rate / 2.0
-    if cutoff_hz >= nyquist:
-        logger.warning(f"Cutoff {cutoff_hz} Hz >= Nyquist {nyquist} Hz — skipping filter")
-        return C.copy()
-
-    sos = butter(order, cutoff_hz / nyquist, btype='low', output='sos')
-
-    N, T = C.shape
-    C_filt = np.zeros_like(C)
-
-    for i in range(N):
-        try:
-            C_filt[i] = sosfiltfilt(sos, C[i])
-        except Exception:
-            C_filt[i] = C[i]
-
-    logger.info(f"  Temporal filter: Butterworth LP, cutoff={cutoff_hz} Hz, "
-                f"order={order}, frame_rate={frame_rate} Hz")
-
-    return C_filt
-
-
 # =============================================================================
 # DECONVOLUTION — OASIS (CaImAn)
 # =============================================================================
@@ -91,7 +42,6 @@ def deconvolve_traces(
     frame_rate: float,
     decay_time: float = 0.4,
     method: str = 'oasis',
-    penalty: float = 0,
     optimize_g: bool = True,
     noise_method: str = 'mean',
     s_min: float = 0.1,
@@ -133,8 +83,6 @@ def deconvolve_traces(
         removed deliberately — it produced numbers indistinguishable from real
         results, and the peak detector formerly used reported 4,951 spikes on a
         silent ROI with ordinary photobleaching drift.
-    penalty : float
-        Sparsity penalty (L1). 0 = auto-tune (recommended for OASIS).
     optimize_g : bool
         Whether OASIS should optimise the AR coefficient from data.
     noise_method : str
@@ -270,7 +218,7 @@ def deconvolve_traces(
         try:
             result = _deconvolve_oasis(
                 C_dff, frame_rate, decay_time,
-                penalty=penalty, optimize_g=optimize_g,
+                optimize_g=optimize_g,
                 noise_method=noise_method,
                 s_min=s_min, noise_gate_sigma=noise_gate_sigma,
             )
@@ -501,7 +449,7 @@ def _apply_safety_net(result, C_dff, frame_rate, decay_time,
 
 
 def _deconvolve_oasis(
-    C, frame_rate, decay_time, penalty, optimize_g, noise_method,
+    C, frame_rate, decay_time, optimize_g, noise_method,
     s_min=0.1, noise_gate_sigma=3.5,
 ) -> Dict[str, np.ndarray]:
     """Run CaImAn's OASIS deconvolution.
