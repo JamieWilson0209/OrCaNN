@@ -363,11 +363,11 @@ def run_analysis(
             f"{len(_fellback)} recording(s) fell back to the default "
             f"amplitude method: {', '.join(_fellback)}")
 
-    # The detector matters more than the amplitude method. If the OASIS solver
-    # raises, deconvolve_traces falls back to the threshold detector for the
-    # whole recording, which reports roughly 60% more events at a different
-    # amplitude scale. Only the configured method used to be written to disk, so
-    # a cohort split this way was undetectable.
+    # The detector matters more than the amplitude method: oasis and robust
+    # differ in event counts and amplitude scale, so pooling recordings across
+    # them is not valid. Since 10df777 there is no fallback that could switch
+    # method silently, but a cohort can still mix them if the config changed
+    # partway through a study, and that is what this catches.
     _detectors = {}
     for d in datasets:
         _detectors.setdefault(getattr(d, 'deconv_method', '') or 'unknown',

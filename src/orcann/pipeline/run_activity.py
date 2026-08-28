@@ -134,11 +134,10 @@ def _deconvolve(cfg, c_dff):
     contained NaN or Inf. Those ROIs were never deconvolved, so their zero spike
     count is not a measurement and must not be read as a silent ROI.
 
-    ``method_used`` is what actually ran, which is not always what was asked
-    for: if the OASIS solver raises, deconvolve_traces falls back to the
-    threshold detector for the whole recording. That detector reports ~60% more
-    events at a different amplitude scale, so a cohort split across the two is
-    not comparable — and the fallback is otherwise silent.
+    ``method_used`` is what the detector reported having done. There are no
+    fallback paths left, so it agrees with the configured method; it is recorded
+    rather than assumed so that a cohort mixing oasis and robust recordings —
+    which is legitimate if the config changed mid-study — is still detectable.
     """
     if not cfg.deconvolution.enabled:
         return None, None, None, None, None, None
@@ -214,18 +213,16 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "n_roi": int(c_dff.shape[0]),
         "n_frames": int(c_dff.shape[1]),
         "baseline": {"method": cfg.baseline.method, "percentile": cfg.baseline.percentile},
-        # Both the configured method and the one that actually ran. They differ
-        # when the OASIS solver raises and deconvolve_traces falls back to the
-        # threshold detector for the whole recording — previously invisible,
-        # because only the configured value was written.
+        # method_used is what the detector reported having done, rather than
+        # what was asked for. Since 10df777 removed the fallback paths the two
+        # always agree, so there is no method_fallback flag any more — but the
+        # observed value is still what gets recorded and what the cohort check
+        # reads, so a future divergence cannot go unnoticed.
         "deconvolution": {"enabled": cfg.deconvolution.enabled,
                           "method": cfg.deconvolution.method,
                           "method_used": deconv_used,
                           "n_traces_rejected": (0 if rejected is None
-                                                else int(np.asarray(rejected).sum())),
-                          "method_fallback": bool(
-                              deconv_used is not None
-                              and deconv_used != cfg.deconvolution.method)},
+                                                else int(np.asarray(rejected).sum()))},
         "amplitude_method": cfg.baseline.method,
         "source": os.path.abspath(source) if source else None,
     }
