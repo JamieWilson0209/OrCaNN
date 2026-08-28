@@ -14,7 +14,13 @@ Features:
 Author: Calcium Pipeline
 """
 
+import html as _html
 import numpy as np
+
+
+def _esc(v) -> str:
+    """Escape a value for HTML text/attribute interpolation."""
+    return _html.escape(str(v), quote=True)
 import json
 import base64
 import os
@@ -33,12 +39,17 @@ def array_to_base64_png(arr: np.ndarray, cmap: str = 'gray', vmin: float = None,
     from PIL import Image
     
     # Normalize array
+    # nanpercentile + a NaN fill: np.percentile returns NaN if any element is
+    # NaN, which made arr_norm all-NaN and the colormap paint the entire image
+    # its "bad" colour — a solid black frame with contours drawn on top.
+    finite = np.isfinite(arr)
     if vmin is None:
-        vmin = np.percentile(arr, 1)
+        vmin = np.nanpercentile(arr, 1) if finite.any() else 0.0
     if vmax is None:
-        vmax = np.percentile(arr, 99)
-    
+        vmax = np.nanpercentile(arr, 99) if finite.any() else 1.0
+
     arr_norm = np.clip((arr - vmin) / (vmax - vmin + 1e-10), 0, 1).astype(np.float32)
+    arr_norm[~finite] = 0.0
     
     # Apply colormap — request float32 output to avoid a full float64 RGBA copy
     cm = plt.get_cmap(cmap)
@@ -141,7 +152,10 @@ def generate_roi_diagnostic_data(
         solidity = None
         if seeds.contour_success[i] and seeds.contours[i] is not None:
             contour = seeds.contours[i].contour.squeeze()
-            if len(contour.shape) == 2:
+            # A degenerate contour squeezes to shape (2,), leaving contour_points
+            # None while the "Contour" badge below still shows. Needs >= 3 points
+            # to draw a closed outline at all.
+            if contour.ndim == 2 and contour.shape[0] >= 3:
                 contour_points = contour.tolist()
             circularity = seeds.contours[i].circularity
             solidity = seeds.contours[i].solidity
@@ -151,10 +165,10 @@ def generate_roi_diagnostic_data(
             'center': [float(y), float(x)],
             'radius': float(r),
             'intensity': float(seeds.intensities[i]),
-            'has_contour': bool(seeds.contour_success[i]),
+            'has_contour': bool(seeds.contour_success[i] and contour_points is not None),
             'contour_points': contour_points,
-            'circularity': float(circularity) if circularity else None,
-            'solidity': float(solidity) if solidity else None,
+            'circularity': float(circularity) if circularity is not None else None,
+            'solidity': float(solidity) if solidity is not None else None,
             'source': str(seeds.source_projection[i]) if hasattr(seeds, 'source_projection') else 'unknown',
             'boundary_touching': bool(seeds.boundary_touching[i]) if (hasattr(seeds, 'boundary_touching') and len(seeds.boundary_touching)) else False,
             'bbox': [int(y_min), int(y_max), int(x_min), int(x_max)],
@@ -250,12 +264,18 @@ def generate_interactive_gallery(
     d1, d2 = projections.max_proj.shape
     
     # Statistics
+    _has_radii = seeds.radii.size > 0
     stats = {
         'total_seeds': seeds.n_seeds,
+        'shown': len(roi_data),          # max_rois can truncate; say so
+        'truncated': seeds.n_seeds - len(roi_data),
         'with_contours': int(seeds.contour_success.sum()),
         'fallback': int((~seeds.contour_success).sum()),
-        'median_radius': float(np.median(seeds.radii)),
-        'radius_range': [float(seeds.radii.min()), float(seeds.radii.max())],
+        # A recording where segmentation found nothing used to raise here, on a
+        # summary line, and lose the whole gallery.
+        'median_radius': float(np.median(seeds.radii)) if _has_radii else 0.0,
+        'radius_range': ([float(seeds.radii.min()), float(seeds.radii.max())]
+                         if _has_radii else [0.0, 0.0]),
     }
     
     # Generate HTML
@@ -264,7 +284,7 @@ def generate_interactive_gallery(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{_esc(title)}</title>
     <style>
         * {{
             margin: 0;
@@ -608,7 +628,7 @@ def generate_interactive_gallery(
     <div class="container">
         <!-- Left Controls Panel -->
         <div class="controls-panel">
-            <h2>{title}</h2>
+            <h2>{_esc(title)}</h2>
             
             <div class="control-group">
                 <h3>Background Layer</h3>
@@ -843,13 +863,9 @@ def generate_interactive_gallery(
             requestAnimationFrame(tryInit);
         }}
         
-        // Re-fit on window resize
-        window.addEventListener('resize', () => {{
-            if (imagesLoaded) {{
-                fitToView();
-                render();
-            }}
-        }});
+        // NOTE: resize is handled once, near the end of this script, by
+        // updateTransform(). A second listener here used to call fitToView(),
+        // which resets zoom and pan, so every resize threw away the user's view.
         
         function getVisibleRois() {{
             return roiData.filter(roi => {{
@@ -1045,12 +1061,22 @@ def generate_interactive_gallery(
             if (traceDenoised && traceDenoised.length > 0) {{
                 allVals = allVals.concat(traceDenoised);
             }}
-            const min = Math.min(...allVals);
-            const max = Math.max(...allVals);
+            // A loop, not spread: Math.min(...) passes one argument per sample and
+            // WebKit throws RangeError above ~65k, i.e. any recording past ~33k
+            // frames. Non-finite samples are skipped so a single NaN cannot blank
+            // the whole plot and print "NaN%" on the axes.
+            let min = Infinity, max = -Infinity;
+            for (let k = 0; k < allVals.length; k++) {{
+                const v = allVals[k];
+                if (!Number.isFinite(v)) continue;
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }}
+            if (!Number.isFinite(min)) {{ min = 0; max = 1; }}
             const range = max - min || 1;
             
             function toY(val) {{ return h - ((val - min) / range) * (h - 20) - 10; }}
-            function toX(i, len) {{ return (i / (len - 1)) * w; }}
+            function toX(i, len) {{ return len > 1 ? (i / (len - 1)) * w : w / 2; }}
             
             // Draw grid
             tctx.strokeStyle = '#1a1a3a';
@@ -1184,7 +1210,7 @@ def generate_interactive_gallery(
             showing.forEach(roi => {{
                 const item = document.createElement('div');
                 item.className = 'roi-list-item';
-                if (selectedRoi && selectedRoi.id === roi.id) item.className += ' selected';
+                if (selectedRoi != null && selectedRoi === roi.id) item.className += ' selected';
                 item.dataset.id = roi.id;
                 item.innerHTML = `
                     <span class="roi-num">#${{roi.id}}</span>

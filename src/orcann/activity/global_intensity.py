@@ -73,12 +73,27 @@ def global_intensity_diagnostic(movie, out_dir, rec_id="", *, guard=2,
     z = np.abs(d - med) / mad
     flagged = np.where(z > mad_k)[0] + 1          # frame indices of steps
 
+    # bleach_fraction is only meaningful when the start and end windows are
+    # disjoint and the start level is non-zero. None rather than 0.0/Infinity:
+    # json.dump writes bare -Infinity, which is not valid JSON by the spec, and
+    # 0.0 is indistinguishable from a genuinely bleach-free recording.
+    f_start = float(np.median(m[:level_win]))
+    f_end = float(np.median(m[-level_win:]))
+    if n <= 2 * level_win or not np.isfinite(f_start) or f_start == 0.0:
+        bleach = None
+    else:
+        bleach = float(1.0 - f_end / f_start)
+
+    # One excursion produces two large first differences (down, then back up).
+    # Count runs of consecutive flagged frames, not raw crossings.
+    n_steps = int(np.sum(np.diff(flagged) > 1) + 1) if flagged.size else 0
+
     metrics = {
         "n_frames": int(n),
-        "mean_F_start": float(np.median(m[:level_win])),
-        "mean_F_end": float(np.median(m[-level_win:])),
-        "bleach_fraction": float(1.0 - np.median(m[-level_win:]) / np.median(m[:level_win])),
-        "n_global_steps": int(flagged.size),
+        "mean_F_start": f_start,
+        "mean_F_end": f_end,
+        "bleach_fraction": bleach,
+        "n_global_steps": n_steps,
         "step_frame": None,
         "dip_magnitude": 0.0,
         "level_shift": 0.0,

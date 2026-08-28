@@ -105,9 +105,14 @@ def _compute_dff(cfg, traces):
 
 
 def _deconvolve(cfg, c_dff):
-    """OASIS spike inference on dF/F0 traces; returns (denoised, spikes, noise)."""
+    """OASIS spike inference on dF/F0 traces.
+
+    Returns (denoised, spikes, noise, censored) — censored being the per-ROI
+    count of detected events touching a trace boundary, whose duration is
+    unknown and whose amplitude is a lower bound.
+    """
     if not cfg.deconvolution.enabled:
-        return None, None, None
+        return None, None, None, None
     from orcann.activity.deconvolution import deconvolve_traces
     d = cfg.deconvolution
     res = deconvolve_traces(
@@ -118,11 +123,12 @@ def _deconvolve(cfg, c_dff):
         robust_safety_net=d.robust_safety_net,
         robust_k_onset=d.robust_k_onset, robust_k_peak=d.robust_k_peak,
         robust_min_duration_s=d.robust_min_duration_s)
-    return res.get("C_denoised"), res.get("S"), res.get("noise")
+    return (res.get("C_denoised"), res.get("S"), res.get("noise"),
+            res.get("n_spikes_censored"))
 
 
 def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
-                   noise, labels, mean_proj, max_proj, source,
+                   noise, censored, labels, mean_proj, max_proj, source,
                    motion=None, motion_shifts=None, global_intensity=None):
     """Write the calcium-format per-recording folder + run_info.json."""
     from orcann.activity.roi_adapter import footprints_from_labels
@@ -139,6 +145,8 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         np.save(os.path.join(data, "spike_trains.npy"), spikes.astype(np.float32))
     if noise is not None:
         np.save(os.path.join(data, "deconv_noise.npy"), np.asarray(noise, np.float32))
+    if censored is not None:
+        np.save(os.path.join(data, "deconv_censored.npy"), np.asarray(censored, np.int32))
     if max_proj is not None:
         np.save(os.path.join(data, "max_projection.npy"), max_proj.astype(np.float32))
     np.save(os.path.join(data, "mean_projection.npy"), mean_proj.astype(np.float32))
@@ -176,27 +184,29 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
 
 
 def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
-                     c_dff, c_raw, denoised, spikes, noise):
+                     c_dff, c_raw, denoised, spikes):
     """Interactive HTML gallery for one recording."""
     g = cfg.gallery
     if not g.interactive:
         return
     from orcann.activity.roi_adapter import build_seed_view, build_projections
-    seeds = build_seed_view(labels, max_projection=max_proj, centroids=centroids)
-    if g.interactive:
-        try:
-            from orcann.activity.gallery import generate_interactive_gallery
-            projections = build_projections(movie, max_projection=max_proj)
-            generate_interactive_gallery(
-                seeds, projections, movie,
-                output_path=os.path.join(out_dir, "gallery.html"),
-                title=f"{rec_id} - ROI Gallery", max_rois=g.max_rois,
-                movie_processed=movie,
-                traces_denoised=denoised, spike_trains=spikes,
-                pipeline_traces_dff=c_dff, pipeline_traces_raw=c_raw)
-            logger.info("  gallery.html written")
-        except Exception as e:                       # a gallery failure must not lose data
-            logger.warning(f"  interactive gallery failed: {e}")
+    try:
+        # Inside the try: a labels/projection shape mismatch raised here used to
+        # escape the handler below and kill the whole batch, after this
+        # recording's data folder had already been written.
+        seeds = build_seed_view(labels, max_projection=max_proj, centroids=centroids)
+        from orcann.activity.gallery import generate_interactive_gallery
+        projections = build_projections(movie, max_projection=max_proj)
+        generate_interactive_gallery(
+            seeds, projections, movie,
+            output_path=os.path.join(out_dir, "gallery.html"),
+            title=f"{rec_id} - ROI Gallery", max_rois=g.max_rois,
+            movie_processed=movie,
+            traces_denoised=denoised, spike_trains=spikes,
+            pipeline_traces_dff=c_dff, pipeline_traces_raw=c_raw)
+        logger.info("  gallery.html written")
+    except Exception as e:                       # a gallery failure must not lose data
+        logger.warning(f"  interactive gallery failed: {e}")
 
 
 def run(cfg, task_id=None, force=False):
@@ -238,16 +248,17 @@ def run(cfg, task_id=None, force=False):
             logger.warning(f"  global intensity diagnostic failed: {e}")
 
         c_dff, c_raw = _compute_dff(cfg, traces)
-        denoised, spikes, noise = _deconvolve(cfg, c_dff)
+        denoised, spikes, noise, censored = _deconvolve(cfg, c_dff)
 
         motion, motion_shifts = _motion_meta(mv)
         _write_outputs(out_dir, rec_id, cfg, c_dff=c_dff, c_raw=c_raw,
                        denoised=denoised, spikes=spikes, noise=noise,
+                       censored=censored,
                        labels=labels, mean_proj=mean_proj, max_proj=max_proj,
                        source=mv, motion=motion, motion_shifts=motion_shifts,
                        global_intensity=gi)
         _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
-                         c_dff, c_raw, denoised, spikes, noise)
+                         c_dff, c_raw, denoised, spikes)
 
         n_spk = int((spikes > 0).sum()) if spikes is not None else 0
         print(f"{rec_id:28s} {int(c_dff.shape[0]):6d} cells  {n_spk:8d} spikes")

@@ -152,6 +152,8 @@ def deconvolve_traces(
         'g'           : (N, p)  — AR coefficients per neuron
         'method'      : str     — method used
         'n_spikes'    : (N,)    — number of inferred spikes per neuron
+        'n_spikes_censored' : (N,) — of those, how many touch a trace boundary
+        'n_spikes_rescued'  : int  — ROIs backfilled by the safety net (oasis only)
         'C_dff'       : (N, T)  — ΔF/F₀ input used for deconvolution
     """
     N, T = C.shape
@@ -160,6 +162,19 @@ def deconvolve_traces(
     # OASIS expects small-valued ΔF/F₀ traces (values near 0, transients
     # as positive bumps of ~0.05–0.5).  If traces are raw fluorescence
     # (values in hundreds/thousands/millions), convert them first.
+    if N == 0 or C.size == 0:
+        # Guard before _ensure_dff: an empty array makes np.median NaN, which
+        # sends it down the raw-fluorescence branch and crashes inside a log
+        # line in baseline.py. Return the empty result the callers expect.
+        logger.warning("  No ROIs to deconvolve — returning empty result")
+        empty = C.astype(np.float32)
+        return {'C_denoised': empty.copy(), 'S': np.zeros_like(empty),
+                'bl': np.zeros(N, np.float32), 'noise': np.zeros(N, np.float32),
+                'g': np.zeros((N, 1), np.float32), 'method': method,
+                'n_spikes': np.zeros(N, np.int32),
+                'n_spikes_censored': np.zeros(N, np.int32),
+                'n_spikes_rescued': 0, 'C_dff': empty}
+
     C_dff = _ensure_dff(C, frame_rate)
 
     logger.info(f"Deconvolution: method={method}, {N} traces, "
@@ -224,6 +239,14 @@ def deconvolve_traces(
     else:
         raise ValueError(f"Unknown deconvolution method: {method}")
 
+    # Every path must expose the same keys: _deconvolve_threshold never set
+    # this, and the safety net's `if not empty.any(): return` skipped creating
+    # it, so consumers hit KeyError on data-dependent runs. 0 is meaningful
+    # here, not a placeholder — OASIS zeroes S[:, :edge_frames] and
+    # S[:, -edge_frames:], so a fitted ROI has no boundary event by construction.
+    if 'n_spikes_censored' not in result:
+        result['n_spikes_censored'] = np.zeros(N, dtype=np.int32)
+    result.setdefault('n_spikes_rescued', 0)
     result['C_dff'] = C_dff
     return result
 
@@ -602,8 +625,11 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
     noise: a single-sample noise spike clears neither the duration nor,
     usually, the peak bar.  Noise is estimated robustly from successive
     differences (``_mad_noise``), so a broad, high-amplitude transient does not
-    inflate it.  Returns a spike train with the peak ΔF/F₀ placed at each event
-    maximum, and the event count.
+    inflate it.
+
+    Returns ``(S, n_events, n_censored)``: a spike train with the peak ΔF/F₀
+    placed at each event maximum, the event count, and how many of those events
+    touch frame 0 or frame T-1 (see the note at the boundary test below).
     """
     T = len(trace)
     S = np.zeros(T, dtype=np.float32)
@@ -630,14 +656,16 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
             pk = i + int(np.argmax(seg))
             S[pk] = float(trace[pk] - base)
             n_events += 1
-            # An excursion that touches either end of the trace is censored: it
-            # was already under way when recording started, or had not finished
-            # when it stopped. The event is real and stays in the spike train —
-            # it began inside the window, so it belongs in a rate — but its
-            # duration is unknown and its peak may lie outside the trace, so the
-            # amplitude in S is a lower bound. Counted separately rather than
-            # dropped: excluding real events is a scientific decision, not an
-            # engineering one, and the caller is better placed to make it.
+            # An excursion touching either end of the trace is censored. Right
+            # (j == T): the event began inside the window but had not finished,
+            # so its duration is unknown and its peak may lie beyond the trace.
+            # Left (i == 0): it was already under way at frame 0, so its onset
+            # is outside the recording entirely and counting it inflates the
+            # rate. The two are not equivalent and only the right-censored case
+            # clearly belongs in a rate. Both are kept and counted rather than
+            # dropped, because excluding real events is a scientific decision,
+            # not an engineering one — but the count is what lets the caller
+            # make it. In both cases the amplitude in S is a lower bound.
             if i == 0 or j == T:
                 n_censored += 1
         i = j

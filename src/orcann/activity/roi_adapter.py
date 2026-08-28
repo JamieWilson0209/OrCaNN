@@ -19,10 +19,13 @@ matching ``inference.write_recording``'s ROI axis so ids line up across stages.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # --- one ROI's derived geometry (the gallery reads .contour/.circularity/.solidity)
@@ -98,6 +101,16 @@ def build_seed_view(labels: np.ndarray,
     edge = np.zeros(n, bool)
     contours: List[Optional[_Contour]] = []
 
+    if centroids is not None and len(centroids) != len(ids):
+        # Half-from-file, half-recomputed is worse than either: centroids.npy and
+        # labels.npy are written separately, so a length mismatch means one is
+        # stale. Fall back wholesale and say so.
+        logger.warning(
+            "centroids has %d entries for %d labels — ignoring it and "
+            "recomputing all centres from the label image",
+            len(centroids), len(ids))
+        centroids = None
+
     props = {p.label: p for p in measure.regionprops(labels)}
     for i, k in enumerate(ids):
         m = labels == k
@@ -152,10 +165,13 @@ def build_projections(movie: np.ndarray,
 def _correlation_image(movie: np.ndarray) -> np.ndarray:
     """Mean Pearson correlation of each pixel with its 8 neighbours (H, W)."""
     T, H, W = movie.shape
+    # In place: x**2 and x/sd each allocated another (T, H, W) array, so a 10 GB
+    # recording peaked at roughly four copies and OOM-killed the activity stage.
     x = movie - movie.mean(axis=0, keepdims=True)
-    sd = np.sqrt((x ** 2).sum(axis=0))
+    sd = np.sqrt(np.einsum('thw,thw->hw', x, x))
     sd[sd == 0] = 1e-12
-    xn = x / sd
+    x /= sd
+    xn = x
     corr = np.zeros((H, W), np.float32)
     count = np.zeros((H, W), np.float32)
     for dy, dx in ((-1, -1), (-1, 0), (-1, 1), (0, -1),

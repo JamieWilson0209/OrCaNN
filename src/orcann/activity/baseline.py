@@ -114,8 +114,13 @@ def _rolling_baseline(
     return baseline
 
 
-def _compute_dff_stats(C_dff, C_raw, baseline_drift_pcts, n_clipped, T):
+def _compute_dff_stats(C_dff, baseline_drift_pcts, n_clipped, T):
     """Compute summary statistics shared by both correction methods."""
+    if C_dff.size == 0:
+        # Every statistic below reduces over C_dff, including one inside a log
+        # f-string; on an empty ROI set that raised from the logging line.
+        return {'median_dff': 0.0, 'median_baseline_drift_pct': 0.0,
+                'n_clipped': int(n_clipped), 'n_traces': 0}
     median_drift = float(np.median(baseline_drift_pcts))
     median_dff = float(np.median(C_dff))
 
@@ -231,18 +236,20 @@ def compute_dff_traces(
         # n_clipped counts samples flagged as extreme (|dff|>50);
         # the clip below is more aggressive (cap at 100, floor -1) so
         # the output stays well-conditioned for downstream stats.
-        n_extreme = int(np.sum(np.abs(dff) > 50.0))
-        n_clipped += n_extreme
+        n_clipped += int(np.sum((dff < -1.0) | (dff > 100.0)))
         C_dff[i] = np.clip(dff, -1.0, 100.0).astype(np.float32)
 
-    stats = _compute_dff_stats(C_dff, C_raw, drift_pcts, n_clipped, T)
+    stats = _compute_dff_stats(C_dff, drift_pcts, n_clipped, T)
     info = {
         'method': 'per_trace_rolling_percentile',
         'percentile': percentile,
         'window_frames': window,
         **stats,
     }
-    return C_dff, C_raw, info
+    # A copy, not the caller's array: this is saved as temporal_traces_raw.npy,
+    # so returning the input object let an upstream in-place mutation silently
+    # rewrite the archived raw traces.
+    return C_dff, np.array(C_raw, copy=True), info
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -417,11 +424,10 @@ def compute_dff_local_background(
         # n_clipped counts samples flagged as extreme (|dff|>50);
         # the clip below is more aggressive (cap at 100, floor -1) so
         # the output stays well-conditioned for downstream stats.
-        n_extreme = int(np.sum(np.abs(dff) > 50.0))
-        n_clipped += n_extreme
+        n_clipped += int(np.sum((dff < -1.0) | (dff > 100.0)))
         C_dff[i] = np.clip(dff, -1.0, 100.0).astype(np.float32)
 
-    stats = _compute_dff_stats(C_dff, C_raw, drift_pcts, n_clipped, T)
+    stats = _compute_dff_stats(C_dff, drift_pcts, n_clipped, T)
     info = {
         'method': 'local_background_tissue_masked',
         'percentile': percentile,
@@ -436,4 +442,7 @@ def compute_dff_local_background(
         'edge_trim_end': trim_end,
         **stats,
     }
-    return C_dff, C_raw, info
+    # A copy, not the caller's array: this is saved as temporal_traces_raw.npy,
+    # so returning the input object let an upstream in-place mutation silently
+    # rewrite the archived raw traces.
+    return C_dff, np.array(C_raw, copy=True), info
