@@ -14,6 +14,39 @@ baseline.  Two methods are provided:
 
 These operate on extracted traces (N × T), not on the movie itself.
 Movie-level preprocessing (motion correction) is handled separately.
+
+Known limitation — F₀ near zero (UNSOLVED)
+------------------------------------------
+ΔF/F₀ = (F − F₀) / F₀ is undefined as F₀ → 0, and there is no settled answer
+in the field for what to do about it. What the rolling baseline here does is
+floor F₀ at 1% of the trace's own median, which keeps the division
+well-conditioned for dim ROIs and is scale-relative — but it is a guard, not a
+solution, and it silently changes the meaning of the output for any trace whose
+true resting fluorescence is genuinely near zero.
+
+The three published positions disagree:
+
+- **CaImAn** (``detrend_df_f``) divides by ``Df + Fd`` — the background
+  baseline *added back* to the signal baseline — so its denominator is
+  structurally non-small and it needs no floor at all. It also offers
+  ``detrend_only``, documented for 1p data "where baseline fluorescence cannot
+  be determined": subtract, do not divide.
+- **Practical guides** subtract background *before* ΔF/F and then add a
+  "safety margin chosen by experience… or whatever makes sense for your data" —
+  i.e. an offset in the data's own units, not a universal constant.
+- **Suite2p** concedes F₀ "may sometimes be estimated to be negative or
+  near-zero for high SNR sensors", and its suggested workaround comes with the
+  caveat that the choice affects interpretation.
+- **Chen et al., "Calcium Imaging and the Curse of Negativity"** recommends no
+  floor at all, and z-scoring instead, because a moving-baseline ΔF/F₀ invents
+  positive signal when an inhibited neuron returns to rest.
+
+This matters little for OrCaNN today: traces are weighted means of raw
+microscopy counts with medians in the hundreds, so the floor is never reached.
+It becomes live for normalised, background-subtracted or externally-sourced
+traces. Deciding between a detrend-only fallback, a background-inclusive
+denominator, and z-scoring is a scientific choice about what the pipeline
+reports, and has not been made.
 """
 
 import numpy as np
@@ -70,8 +103,11 @@ def _rolling_baseline(
 
     If trim_start/trim_end are nonzero, the baseline is estimated on the
     interior and extrapolated to the edges by repeating the boundary value.
-    The baseline is floored at 1% of the trace median (minimum 1.0) to
-    prevent division-by-near-zero for dim ROIs.
+    The baseline is floored at 1% of the trace's own median to prevent
+    division-by-near-zero for dim ROIs. The floor is scale-relative: a trace
+    measured in raw counts and the same trace scaled to [0, 1] get proportional
+    floors. Traces with no positive samples are left unfloored and warned about
+    — see the known limitation in the module docstring.
 
     Parameters
     ----------
@@ -106,10 +142,25 @@ def _rolling_baseline(
             trace, percentile, size=window, mode='reflect',
         )
 
-    # Floor at 1% of trace median to avoid division by near-zero
-    trace_median = np.median(trace[trace > 0]) if np.any(trace > 0) else 1.0
-    floor = max(trace_median * 0.01, 1.0)
-    np.maximum(baseline, floor, out=baseline)
+    # Floor at 1% of the trace's own median, to keep the ΔF/F₀ division
+    # well-conditioned for dim ROIs. Scale-relative by construction: the floor
+    # was previously max(median * 0.01, 1.0), and that absolute 1.0 dominated
+    # for any trace whose values sit below ~100 — pinning F₀ to a constant and
+    # inverting the sign of every transient. See the module docstring: the
+    # remaining question of what ΔF/F₀ should mean when F₀ genuinely approaches
+    # zero is open, and this guard does not answer it.
+    positive = trace[trace > 0]
+    if positive.size:
+        np.maximum(baseline, float(np.median(positive)) * 0.01, out=baseline)
+    else:
+        # No positive sample anywhere: there is no resting fluorescence to
+        # normalise against, so there is nothing meaningful to floor toward.
+        # Left as measured rather than pinned to an invented constant, and
+        # reported so the caller is not handed a silent -1.0 trace.
+        logger.warning(
+            "trace has no positive samples — F0 is undefined and the ΔF/F₀ "
+            "returned for it is not a ratio (see the known limitation in "
+            "orcann.activity.baseline)")
 
     return baseline
 
