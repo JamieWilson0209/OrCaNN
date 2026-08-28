@@ -122,7 +122,13 @@ def _deconvolve(cfg, c_dff):
         noise_gate_sigma=d.noise_gate_sigma,
         robust_safety_net=d.robust_safety_net,
         robust_k_onset=d.robust_k_onset, robust_k_peak=d.robust_k_peak,
-        robust_min_duration_s=d.robust_min_duration_s)
+        robust_min_duration_s=d.robust_min_duration_s,
+        # The detector baselines with the configured method rather than a global
+        # median, so it needs the same knobs the activity stage used.
+        baseline_percentile=cfg.baseline.percentile,
+        baseline_window_fraction=cfg.baseline.window_fraction,
+        baseline_min_window=cfg.baseline.min_window,
+        baseline_max_window=cfg.baseline.max_window)
     return (res.get("C_denoised"), res.get("S"), res.get("noise"),
             res.get("n_spikes_censored"))
 

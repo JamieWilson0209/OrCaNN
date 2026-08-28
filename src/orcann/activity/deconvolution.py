@@ -101,6 +101,10 @@ def deconvolve_traces(
     robust_k_peak: float = 5.0,
     robust_min_duration_s: float = 0.5,
     robust_safety_net: bool = True,
+    baseline_percentile: float = 8.0,
+    baseline_window_fraction: float = 0.25,
+    baseline_min_window: int = 50,
+    baseline_max_window: int = 500,
 ) -> Dict[str, np.ndarray]:
     """
     Deconvolve calcium traces to infer spike trains.
@@ -136,6 +140,10 @@ def deconvolve_traces(
         Minimum spike amplitude in ΔF/F₀.  Passed to OASIS's constrained_foopsi
         so the solver zeroes any inferred spike below this amplitude.  0 lets
         OASIS choose (no explicit floor).  Ignored by the threshold method.
+    baseline_percentile, baseline_window_fraction, baseline_min_window, baseline_max_window
+        The rolling-percentile baseline the robust detector and the safety net
+        measure against — the same settings the activity stage used for dF/F0,
+        so the detector and the baseline stage agree on "resting".
     noise_gate_sigma : float
         After deconvolution, keep only spikes whose amplitude exceeds this
         multiple of the per-trace noise floor.  Applied on both the OASIS path
@@ -227,7 +235,11 @@ def deconvolve_traces(
         if robust_safety_net:
             result = _apply_safety_net(
                 result, C_dff, frame_rate, decay_time,
-                robust_k_onset, robust_k_peak, robust_min_duration_s)
+                robust_k_onset, robust_k_peak, robust_min_duration_s,
+                baseline_percentile=baseline_percentile,
+                baseline_window_fraction=baseline_window_fraction,
+                baseline_min_window=baseline_min_window,
+                baseline_max_window=baseline_max_window)
     elif method == 'threshold':
         result = _deconvolve_threshold(C_dff, frame_rate, decay_time,
                                        noise_gate_sigma=noise_gate_sigma)
@@ -235,7 +247,11 @@ def deconvolve_traces(
         result = _deconvolve_robust(
             C_dff, frame_rate, decay_time,
             k_onset=robust_k_onset, k_peak=robust_k_peak,
-            min_duration_s=robust_min_duration_s)
+            min_duration_s=robust_min_duration_s,
+            baseline_percentile=baseline_percentile,
+                baseline_window_fraction=baseline_window_fraction,
+                baseline_min_window=baseline_min_window,
+                baseline_max_window=baseline_max_window)
     else:
         raise ValueError(f"Unknown deconvolution method: {method}")
 
@@ -251,11 +267,106 @@ def deconvolve_traces(
     return result
 
 
+# ── Shared detector policy ───────────────────────────────────────────────────
+# The OASIS path applies two guards after fitting: it zeroes spikes within
+# EDGE_SECONDS of either end (baseline estimation is unreliable there), and it
+# rejects any trace whose elevation lasts longer than MAX_TRANSIENT_SECONDS
+# (a loading artefact or a non-neuronal signal, not a calcium event). Both live
+# here so the robust detector and the safety net apply the same policy rather
+# than a different one — previously the safety net selected exactly the ROIs
+# those guards had emptied and refilled them, defeating both.
+
+EDGE_SECONDS = 0.5
+MAX_TRANSIENT_SECONDS = 80.0
+
+
+def edge_frames_for(frame_rate: float) -> int:
+    """Frames at each end where spikes are suppressed."""
+    return max(2, int(frame_rate * EDGE_SECONDS))
+
+
+def _apply_edge_guard(s_row: np.ndarray, frame_rate: float) -> np.ndarray:
+    """Zero spikes at both trace boundaries, in place."""
+    e = edge_frames_for(frame_rate)
+    if 2 * e >= len(s_row):
+        # The two slices would overlap and erase everything; a short recording
+        # is not evidence of no activity.
+        return s_row
+    s_row[:e] = 0.0
+    s_row[-e:] = 0.0
+    return s_row
+
+
+def _exceeds_duration_gate(trace: np.ndarray, base, frame_rate: float) -> bool:
+    """True if the longest continuous elevation exceeds MAX_TRANSIENT_SECONDS.
+
+    ``base`` must be a SCALAR resting level, not the rolling baseline used for
+    detection. A rolling baseline rises to meet a sustained plateau, so the
+    plateau stops looking elevated and this gate could never fire — which is the
+    opposite of its purpose. OASIS references a single fitted ``bl`` here for the
+    same reason.
+    """
+    max_frames = int(MAX_TRANSIENT_SECONDS * frame_rate)
+    base = float(np.asarray(base, dtype=np.float64).min()
+                 if np.ndim(base) else base)
+    peak_above = float(np.max(trace - base))
+    if peak_above <= 0:
+        return False
+    tolerance = max(0.05 * peak_above, 0.01)
+    elevated = trace > (base + tolerance)
+    if not elevated.any():
+        return False
+    d = np.diff(np.concatenate([[0], elevated.astype(np.int8), [0]]))
+    starts, ends = np.where(d == 1)[0], np.where(d == -1)[0]
+    if len(starts) == 0:
+        return False
+    return int(np.max(ends - starts)) > max_frames
+
+
+def detector_baseline(trace: np.ndarray, frame_rate: float, percentile: float,
+                      window_fraction: float, min_window: int,
+                      max_window: int) -> np.ndarray:
+    """Per-frame baseline for the robust detector, using the configured method.
+
+    The detector used to reference a single global ``np.median(trace)``. That
+    fails in both directions: a drifting trace spends its later half above the
+    median and is chopped into phantom events, while an ROI elevated for more
+    than half the recording pulls the median up with it and goes silent. The
+    same rolling percentile the activity stage uses for dF/F0 tracks drift and
+    is unmoved by sustained activity, so the detector and the baseline stage
+    now agree on what "resting" means.
+    """
+    from scipy import ndimage
+    from orcann.activity.baseline import _adaptive_window
+    T = len(trace)
+    if T < 3:
+        return np.full(T, float(np.median(trace)) if T else 0.0)
+    window = _adaptive_window(T, window_fraction, min_window, max_window)
+    window = min(window, T if T % 2 else T - 1)      # never wider than the trace
+    window = max(3, window if window % 2 else window + 1)
+    # percentile_filter directly, NOT baseline._rolling_baseline: that floors F0
+    # at max(median*0.01, 1.0) to keep the dF/F0 division well-conditioned. This
+    # detector only subtracts, so the floor is not needed here — and on a dF/F0
+    # trace, whose values sit near 0.02, it would pin the baseline to a constant
+    # 1.0 and suppress every event.
+    return ndimage.percentile_filter(
+        np.asarray(trace, np.float64), percentile, size=window, mode='reflect')
+
+
 def _apply_safety_net(result, C_dff, frame_rate, decay_time,
-                      k_onset, k_peak, min_duration_s):
+                      k_onset, k_peak, min_duration_s,
+                      baseline_percentile=8.0, baseline_window_fraction=0.25,
+                       baseline_min_window=50, baseline_max_window=500):
     """Backfill robust-detector spikes for ROIs OASIS left empty but that carry a
     clear transient. Only fills empty ROIs, so it never overrides a real OASIS
-    fit; it just stops obvious events being lost to an OASIS miss."""
+    fit; it just stops obvious events being lost to an OASIS miss.
+
+    The rescued spikes go through the same edge guard and duration gate the
+    OASIS path applies. Without that, the net selected precisely the ROIs those
+    guards had just emptied and refilled them, so one run applied two opposite
+    policies and rescued ROIs carried systematically higher rates. A trace the
+    duration gate rejects stays rejected; the net now only catches genuine
+    solver misses, which is what it was for."""
     S = result['S']
     N = S.shape[0]
     empty = S.sum(axis=1) == 0
@@ -266,11 +377,22 @@ def _apply_safety_net(result, C_dff, frame_rate, decay_time,
         n_censored = np.zeros(N, dtype=np.int32)
         result['n_spikes_censored'] = n_censored
     n_rescued = 0
+    n_gated = 0
     for i in np.where(empty)[0]:
         tr = C_dff[i].astype(np.float64)
+        bl = detector_baseline(tr, frame_rate, baseline_percentile,
+                               baseline_window_fraction, baseline_min_window,
+                               baseline_max_window)
+        rest = float(np.percentile(tr, baseline_percentile))
+        if _exceeds_duration_gate(tr, rest, frame_rate):
+            n_gated += 1
+            continue                     # the duration gate rejected it; keep it rejected
         sn = _mad_noise(tr)
         s_i, n_ev, n_cens = _robust_events(tr, sn, frame_rate,
-                                           k_onset, k_peak, min_duration_s)
+                                           k_onset, k_peak, min_duration_s,
+                                           baseline=bl)
+        _apply_edge_guard(s_i, frame_rate)
+        n_ev = int((s_i > 0).sum())      # recount after the guard
         if n_ev > 0:
             S[i] = s_i
             result['n_spikes'][i] = n_ev
@@ -279,6 +401,9 @@ def _apply_safety_net(result, C_dff, frame_rate, decay_time,
     if n_rescued:
         logger.info(f"  Safety net: recovered {n_rescued} ROI(s) with clear "
                     f"transients that OASIS missed")
+    if n_gated:
+        logger.info(f"  Safety net: {n_gated} empty ROI(s) left empty — the "
+                    f"duration gate rejects them")
     result['n_spikes_rescued'] = n_rescued
     return result
 
@@ -615,7 +740,8 @@ def _mad_noise(trace):
     return 1.4826 * np.median(np.abs(diff - np.median(diff))) / np.sqrt(2)
 
 
-def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
+def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s,
+                   baseline=None):
     """Deterministic transient detection for a single ΔF/F₀ trace.
 
     Independent of OASIS: it finds contiguous excursions above a
@@ -633,9 +759,12 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
     """
     T = len(trace)
     S = np.zeros(T, dtype=np.float32)
-    if noise <= 0:
+    if noise <= 0 or not np.isfinite(noise):
         return S, 0, 0
-    base = float(np.median(trace))
+    # Per-frame baseline from the configured method (see detector_baseline).
+    # None keeps the old global-median behaviour for direct callers.
+    base = (np.full(T, float(np.median(trace))) if baseline is None
+            else np.asarray(baseline, dtype=np.float64))
     onset = base + k_onset * noise
     peak_thr = base + k_peak * noise
     min_dur = max(2, int(round(min_duration_s * frame_rate)))
@@ -651,10 +780,10 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
         j = i
         while j < T and above[j]:
             j += 1
-        seg = trace[i:j]
-        if (j - i) >= min_dur and seg.max() >= peak_thr:
+        seg = trace[i:j] - base[i:j]          # relative to the local baseline
+        if (j - i) >= min_dur and np.any(trace[i:j] >= peak_thr[i:j]):
             pk = i + int(np.argmax(seg))
-            S[pk] = float(trace[pk] - base)
+            S[pk] = float(trace[pk] - base[pk])
             n_events += 1
             # An excursion touching either end of the trace is censored. Right
             # (j == T): the event began inside the window but had not finished,
@@ -673,7 +802,9 @@ def _robust_events(trace, noise, frame_rate, k_onset, k_peak, min_duration_s):
 
 
 def _deconvolve_robust(C, frame_rate, decay_time,
-                       k_onset=3.0, k_peak=5.0, min_duration_s=0.5):
+                       k_onset=3.0, k_peak=5.0, min_duration_s=0.5,
+                       baseline_percentile=8.0, baseline_window_fraction=0.25,
+                       baseline_min_window=50, baseline_max_window=500):
     """Deterministic transient detector as a standalone deconvolution method.
 
     Does no AR deconvolution, so it never fails the way OASIS can: its first
@@ -686,12 +817,25 @@ def _deconvolve_robust(C, frame_rate, decay_time,
     noise_levels = np.zeros(N, dtype=np.float32)
     n_spikes = np.zeros(N, dtype=np.int32)
     n_censored = np.zeros(N, dtype=np.int32)
+    n_duration_rejected = 0
     for i in range(N):
         tr = C[i].astype(np.float64)
+        bl = detector_baseline(tr, frame_rate, baseline_percentile,
+                               baseline_window_fraction, baseline_min_window,
+                               baseline_max_window)
         sn = _mad_noise(tr)
         noise_levels[i] = sn
+        rest = float(np.percentile(tr, baseline_percentile))
+        if _exceeds_duration_gate(tr, rest, frame_rate):
+            n_duration_rejected += 1     # same gate the OASIS path applies
+            continue
         S[i], n_spikes[i], n_censored[i] = _robust_events(
-            tr, sn, frame_rate, k_onset, k_peak, min_duration_s)
+            tr, sn, frame_rate, k_onset, k_peak, min_duration_s, baseline=bl)
+        _apply_edge_guard(S[i], frame_rate)
+        n_spikes[i] = int((S[i] > 0).sum())
+    if n_duration_rejected:
+        logger.info(f"  Duration gate (>{MAX_TRANSIENT_SECONDS:.0f}s): "
+                    f"rejected {n_duration_rejected} trace(s)")
     n_active = int((n_spikes > 0).sum())
     med_active = float(np.median(n_spikes[n_spikes > 0])) if n_active else 0.0
     logger.info(f"  Robust transient detection: {n_active}/{N} ROIs active, "
