@@ -545,9 +545,12 @@ def load_dataset_metrics(
     mean_spike_rate = float(np.mean(spike_rates))
     median_spike_rate = float(np.median(spike_rates))
 
-    # Spike amplitudes — method depends on pipeline configuration:
-    #   direct / local_dff: measure each event as local ΔF/F from raw fluorescence
-    #   global_dff / local_background: measure from corrected traces
+    # Spike amplitudes — method depends on how the activity stage computed ΔF/F:
+    #   direct: measure each event as local ΔF/F from raw fluorescence
+    #   global_dff: measure from corrected traces
+    # The tuple also matches two historical values, so recordings processed
+    # before local_background was removed (and before 'local_dff' was renamed)
+    # still load and are still classified the way they were computed.
     _use_local = amplitude_method in ('direct', 'local_dff')
     _amp_raw = R_fluor_sel if _use_local else None
     all_amps = _measure_transient_amplitudes(

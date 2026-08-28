@@ -82,19 +82,37 @@ def _load_spatial(spatial_dir, rec_id):
     return traces, labels, centroids, max_proj
 
 
+BASELINE_METHODS = ("direct", "global_dff")
+_REMOVED_BASELINE_METHODS = {
+    "local_background":
+        "removed in this branch — it was inherited from the calcium pipeline, "
+        "was never callable (it needs the movie and the spatial footprints, and "
+        "the only call site passed the trace matrix), and built its tissue mask "
+        "with Otsu, the classical thresholding OrCaNN's learned segmenter "
+        "replaced. Use global_dff.",
+}
+
+
 def _compute_dff(cfg, traces):
     """Baseline-correct raw fluorescence traces to dF/F0 per the config."""
     b = cfg.baseline
     fr = cfg.imaging.frame_rate
+    # Validated, not fallen through. Every unrecognised value used to land on
+    # global_dff silently, so a typo — or a config naming a method that no
+    # longer exists — quietly changed how dF/F0 was computed.
+    if b.method in _REMOVED_BASELINE_METHODS:
+        raise ValueError(
+            f"baseline.method={b.method!r}: "
+            f"{_REMOVED_BASELINE_METHODS[b.method]}")
+    if b.method not in BASELINE_METHODS:
+        raise ValueError(
+            f"baseline.method={b.method!r} is not recognised. "
+            f"Valid values: {', '.join(BASELINE_METHODS)}.")
     if b.method == "direct":
         # OASIS receives raw traces; still hand a dF/F0-ish array to the gallery.
         from orcann.activity.baseline import compute_dff_traces
         c_dff, c_raw, _ = compute_dff_traces(traces, frame_rate=fr,
                                              percentile=b.percentile)
-        return c_dff, c_raw
-    if b.method == "local_background":
-        from orcann.activity.baseline import compute_dff_local_background
-        c_dff, c_raw, _ = compute_dff_local_background(traces, frame_rate=fr)
         return c_dff, c_raw
     from orcann.activity.baseline import compute_dff_traces
     c_dff, c_raw, _ = compute_dff_traces(

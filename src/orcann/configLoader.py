@@ -66,7 +66,7 @@ class SpatialParams:
 # --- activity stage: baseline + deconvolution (calcium bridge) ---------------
 @dataclass
 class BaselineParams:
-    method: str = "global_dff"        # direct | global_dff | local_background
+    method: str = "global_dff"        # direct | global_dff
     percentile: float = 8.0
     window_fraction: float = 0.25
     min_window: int = 50
@@ -357,7 +357,7 @@ _FIELD_DOC = {
     "spatial.min_radius": "or drop regions below this equivalent radius in px",
     "spatial.resize_to": "force each frame to NxN when pixel size is unknown (0 = off)",
     "spatial.train_um_per_px": "override the model's recorded training pixel size (null = use model's)",
-    "baseline.method": "direct | global_dff (per-trace rolling percentile) | local_background (tissue-masked)",
+    "baseline.method": "direct | global_dff (per-trace rolling percentile)",
     "baseline.percentile": "baseline percentile for global_dff",
     "baseline.window_fraction": "rolling-baseline window as a fraction of trace length",
     "baseline.min_window": "minimum rolling-baseline window (frames)",
