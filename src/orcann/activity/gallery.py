@@ -18,6 +18,26 @@ import html as _html
 import numpy as np
 
 
+def _round_trace(a, sig: int = 4):
+    """Trace values for embedding, at `sig` significant figures.
+
+    json.dumps writes full float repr — 21.6 characters per sample — for ΔF/F₀
+    values that resolve to about three figures. At 3000 frames the two embedded
+    traces were 126 KB per ROI; rounding takes that to roughly a third with no
+    visible difference in the plot.
+    """
+    arr = np.asarray(a, dtype=np.float64)
+    out = np.zeros_like(arr)
+    nz = np.isfinite(arr) & (arr != 0)
+    if nz.any():
+        # np.round takes a scalar decimals, so scale elementwise instead.
+        mag = np.floor(np.log10(np.abs(arr[nz])))
+        factor = np.power(10.0, np.clip(sig - 1 - mag, -300, 300))
+        out[nz] = np.round(arr[nz] * factor) / factor
+    out[~np.isfinite(arr)] = np.nan
+    return [float(v) for v in out]
+
+
 def _esc(v) -> str:
     """Escape a value for HTML text/attribute interpolation."""
     return _html.escape(str(v), quote=True)
@@ -94,13 +114,23 @@ def generate_roi_diagnostic_data(
     """
     
     T, d1, d2 = movie.shape
-    has_pipeline_traces = (pipeline_traces_dff is not None and 
-                           pipeline_traces_raw is not None)
-    
-    if has_pipeline_traces:
-        logger.info(f"  Using pipeline traces ({pipeline_traces_dff.shape[0]} ROIs)")
-    else:
-        logger.info(f"  No pipeline traces — extracting from movie (bounding box)")
+    if pipeline_traces_dff is None:
+        raise ValueError(
+            "generate_interactive_gallery requires pipeline_traces_dff. It used "
+            "to fall back to a square bounding-box mean of the movie — a "
+            "neuropil-contaminated quantity computed over a box rather than the "
+            "ROI footprint — and label the panel 'Calcium Trace (dF/F %)' either "
+            "way, so the viewer could not tell which they were looking at.")
+    n_traces = int(pipeline_traces_dff.shape[0])
+    if n_traces < seeds.n_seeds:
+        raise ValueError(
+            f"pipeline_traces_dff covers {n_traces} ROIs but the label image has "
+            f"{seeds.n_seeds}. These come from different files "
+            f"(traces.npy vs labels.npy); a mismatch means one is stale. "
+            f"Refusing rather than showing bounding-box means for the "
+            f"remainder — the gallery is wrapped by the caller, so this costs "
+            f"the gallery, not the recording's data.")
+    logger.info(f"  Using pipeline traces ({n_traces} ROIs)")
     
     roi_data = []
     
@@ -108,37 +138,16 @@ def generate_roi_diagnostic_data(
         y, x = seeds.centers[i]
         r = seeds.radii[i]
         
-        # Extract local ROI region (for bounding box info)
-        margin = int(r * 3)
-        y_min = max(0, int(y) - margin)
-        y_max = min(d1, int(y) + margin)
-        x_min = max(0, int(x) - margin)
-        x_max = min(d2, int(x) + margin)
-        
-        if has_pipeline_traces and i < pipeline_traces_dff.shape[0]:
-            # Use the pipeline's actual traces — this is what OASIS saw
-            raw_trace = pipeline_traces_raw[i]
-            dff = pipeline_traces_dff[i] * 100  # convert to percent for display
-        else:
-            # Fallback: extract from movie with bounding box
-            raw_trace = movie[:, max(0, int(y)-int(r)):min(d1, int(y)+int(r)+1),
-                                 max(0, int(x)-int(r)):min(d2, int(x)+int(r)+1)].mean(axis=(1, 2))
-            trace_mean = np.mean(raw_trace)
-            if trace_mean > 1.0:
-                baseline = np.percentile(raw_trace, 10)
-                if baseline > 0:
-                    dff = (raw_trace - baseline) / baseline * 100
-                else:
-                    dff = raw_trace - np.mean(raw_trace)
-            else:
-                dff = raw_trace * 100
+        # The pipeline's own traces — what the detector actually saw. Coverage
+        # is checked once above, so there is no per-ROI fallback.
+        dff = pipeline_traces_dff[i] * 100      # percent, for display
         
         # Denoised trace (from OASIS deconvolution)
         denoised_dff = None
         if traces_denoised is not None and i < traces_denoised.shape[0]:
             den = traces_denoised[i]
             # Convert to percent for display, consistent with dff trace
-            denoised_dff = (den * 100).tolist()
+            denoised_dff = _round_trace(den * 100)
         
         # Spike times (from deconvolution)
         spike_frames = None
@@ -149,7 +158,6 @@ def generate_roi_diagnostic_data(
         # Get contour points if available
         contour_points = None
         circularity = None
-        solidity = None
         if seeds.contour_success[i] and seeds.contours[i] is not None:
             contour = seeds.contours[i].contour.squeeze()
             # A degenerate contour squeezes to shape (2,), leaving contour_points
@@ -158,7 +166,6 @@ def generate_roi_diagnostic_data(
             if contour.ndim == 2 and contour.shape[0] >= 3:
                 contour_points = contour.tolist()
             circularity = seeds.contours[i].circularity
-            solidity = seeds.contours[i].solidity
         
         roi_info = {
             'id': i,
@@ -168,15 +175,14 @@ def generate_roi_diagnostic_data(
             'has_contour': bool(seeds.contour_success[i] and contour_points is not None),
             'contour_points': contour_points,
             'circularity': float(circularity) if circularity is not None else None,
-            'solidity': float(solidity) if solidity is not None else None,
             'source': str(seeds.source_projection[i]) if hasattr(seeds, 'source_projection') else 'unknown',
             'boundary_touching': bool(seeds.boundary_touching[i]) if (hasattr(seeds, 'boundary_touching') and len(seeds.boundary_touching)) else False,
-            'bbox': [int(y_min), int(y_max), int(x_min), int(x_max)],
-            'trace': dff.tolist() if hasattr(dff, 'tolist') else list(dff),
-            'trace_raw': raw_trace.tolist() if hasattr(raw_trace, 'tolist') else list(raw_trace),
+            # Only what the browser reads. bbox, solidity, trace_raw and
+            # uses_pipeline_traces were embedded and never referenced by the
+            # generated JavaScript; trace_raw alone was 31% of every ROI.
+            'trace': _round_trace(dff),
             'trace_denoised': denoised_dff,
             'spike_frames': spike_frames,
-            'uses_pipeline_traces': has_pipeline_traces and i < pipeline_traces_dff.shape[0],
         }
         
         roi_data.append(roi_info)
