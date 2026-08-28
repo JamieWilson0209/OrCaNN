@@ -363,6 +363,32 @@ def run_analysis(
             f"{len(_fellback)} recording(s) fell back to the default "
             f"amplitude method: {', '.join(_fellback)}")
 
+    # The detector matters more than the amplitude method. If the OASIS solver
+    # raises, deconvolve_traces falls back to the threshold detector for the
+    # whole recording, which reports roughly 60% more events at a different
+    # amplitude scale. Only the configured method used to be written to disk, so
+    # a cohort split this way was undetectable.
+    _detectors = {}
+    for d in datasets:
+        _detectors.setdefault(getattr(d, 'deconv_method', '') or 'unknown',
+                              []).append(d.name)
+    results['deconv_method'] = {
+        'by_method': _detectors,
+        'consistent': len(_detectors) <= 1,
+    }
+    if len(_detectors) > 1:
+        logger.error(
+            "Spike counts and amplitudes are NOT comparable across this cohort: "
+            + "; ".join(f"{m} ({len(v)} recording(s))" for m, v in _detectors.items())
+            + ". The detectors differ, so event counts and amplitude scales differ."
+        )
+        for m, names in sorted(_detectors.items()):
+            logger.error(f"    {m}: {', '.join(sorted(names))}")
+    elif 'unknown' in _detectors and len(datasets) > 1:
+        logger.warning(
+            "No detector recorded for any recording — these predate method_used "
+            "being written, so a silent OASIS fallback cannot be ruled out.")
+
     # ── Analysis stages ──────────────────────────────────────────────────
     # Each stage is isolated so one failure cannot cost the run the others, but
     # every outcome is recorded: the report is written into the results JSON and

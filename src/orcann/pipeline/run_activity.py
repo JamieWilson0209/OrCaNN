@@ -125,12 +125,19 @@ def _compute_dff(cfg, traces):
 def _deconvolve(cfg, c_dff):
     """OASIS spike inference on dF/F0 traces.
 
-    Returns (denoised, spikes, noise, censored) — censored being the per-ROI
-    count of detected events touching a trace boundary, whose duration is
-    unknown and whose amplitude is a lower bound.
+    Returns (denoised, spikes, noise, censored, method_used).
+
+    ``censored`` is the per-ROI count of detected events touching a trace
+    boundary, whose duration is unknown and whose amplitude is a lower bound.
+
+    ``method_used`` is what actually ran, which is not always what was asked
+    for: if the OASIS solver raises, deconvolve_traces falls back to the
+    threshold detector for the whole recording. That detector reports ~60% more
+    events at a different amplitude scale, so a cohort split across the two is
+    not comparable — and the fallback is otherwise silent.
     """
     if not cfg.deconvolution.enabled:
-        return None, None, None, None
+        return None, None, None, None, None
     from orcann.activity.deconvolution import deconvolve_traces
     d = cfg.deconvolution
     res = deconvolve_traces(
@@ -148,11 +155,11 @@ def _deconvolve(cfg, c_dff):
         baseline_min_window=cfg.baseline.min_window,
         baseline_max_window=cfg.baseline.max_window)
     return (res.get("C_denoised"), res.get("S"), res.get("noise"),
-            res.get("n_spikes_censored"))
+            res.get("n_spikes_censored"), res.get("method"))
 
 
 def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
-                   noise, censored, labels, mean_proj, max_proj, source,
+                   noise, censored, deconv_used, labels, mean_proj, max_proj, source,
                    motion=None, motion_shifts=None, global_intensity=None):
     """Write the calcium-format per-recording folder + run_info.json."""
     from orcann.activity.roi_adapter import footprints_from_labels
@@ -194,8 +201,16 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "n_roi": int(c_dff.shape[0]),
         "n_frames": int(c_dff.shape[1]),
         "baseline": {"method": cfg.baseline.method, "percentile": cfg.baseline.percentile},
+        # Both the configured method and the one that actually ran. They differ
+        # when the OASIS solver raises and deconvolve_traces falls back to the
+        # threshold detector for the whole recording — previously invisible,
+        # because only the configured value was written.
         "deconvolution": {"enabled": cfg.deconvolution.enabled,
-                          "method": cfg.deconvolution.method},
+                          "method": cfg.deconvolution.method,
+                          "method_used": deconv_used,
+                          "method_fallback": bool(
+                              deconv_used is not None
+                              and deconv_used != cfg.deconvolution.method)},
         "amplitude_method": cfg.baseline.method,
         "source": os.path.abspath(source) if source else None,
     }
@@ -272,12 +287,12 @@ def run(cfg, task_id=None, force=False):
             logger.warning(f"  global intensity diagnostic failed: {e}")
 
         c_dff, c_raw = _compute_dff(cfg, traces)
-        denoised, spikes, noise, censored = _deconvolve(cfg, c_dff)
+        denoised, spikes, noise, censored, deconv_used = _deconvolve(cfg, c_dff)
 
         motion, motion_shifts = _motion_meta(mv)
         _write_outputs(out_dir, rec_id, cfg, c_dff=c_dff, c_raw=c_raw,
                        denoised=denoised, spikes=spikes, noise=noise,
-                       censored=censored,
+                       censored=censored, deconv_used=deconv_used,
                        labels=labels, mean_proj=mean_proj, max_proj=max_proj,
                        source=mv, motion=motion, motion_shifts=motion_shifts,
                        global_intensity=gi)

@@ -197,6 +197,7 @@ class DatasetMetrics:
     genotype: str = ''                 # 'Control', 'Mutant', or 'Unknown'
     amplitude_method: str = ''         # how spike amplitudes were measured
     amplitude_method_resolved: str = ''  # 'file' | 'default' | 'fallback'
+    deconv_method: str = ''            # the detector that actually ran
     
     # Manual override
     manually_inactive: bool = False    # True if visually confirmed no activity
@@ -279,31 +280,49 @@ def load_dataset_metrics(
     # comparisons can be detected downstream.
     _AMP_DEFAULT = 'global_dff'
     amplitude_method = _AMP_DEFAULT
+    deconv_method = 'unknown'
     amplitude_method_resolved = 'default'      # 'file' | 'default' | 'fallback'
-    pipeline_json_path = result_path / 'pipeline_results.json'
-    if pipeline_json_path.exists():
+
+    # run_info.json is what the activity stage writes. pipeline_results.json is
+    # the calcium pipeline's name for the same thing and nothing in OrCaNN has
+    # ever written it — reading only that name meant this block always took the
+    # fallback path and the recorded method was always the default, whatever the
+    # run actually did. Both are tried, newest first, so pre-OrCaNN recordings
+    # still load.
+    for _meta_path in (result_path / 'run_info.json',
+                       result_path / 'pipeline_results.json'):
+        if not _meta_path.exists():
+            continue
         try:
             import json as _json
-            with open(pipeline_json_path) as _f:
+            with open(_meta_path) as _f:
                 _pres = _json.load(_f)
-            if 'amplitude_method' in _pres:
-                amplitude_method = _pres['amplitude_method']
-                amplitude_method_resolved = 'file'
-            else:
-                logger.warning(
-                    f"  {name}: pipeline_results.json has no 'amplitude_method' "
-                    f"- assuming '{_AMP_DEFAULT}'")
-                amplitude_method_resolved = 'fallback'
         except Exception as e:
             logger.warning(
-                f"  {name}: could not read amplitude_method from "
-                f"{pipeline_json_path.name} ({e}) - falling back to "
-                f"'{_AMP_DEFAULT}'. Spike amplitudes for this recording may not "
-                f"be comparable with the rest of the cohort.")
+                f"  {name}: could not read {_meta_path.name} ({e}) - falling "
+                f"back to amplitude_method='{_AMP_DEFAULT}'. Spike amplitudes "
+                f"for this recording may not be comparable with the cohort.")
             amplitude_method_resolved = 'fallback'
+            break
+
+        _dec = _pres.get('deconvolution') or {}
+        # method_used is absent from recordings processed before it was
+        # recorded; fall back to the configured method, which was all that
+        # existed then, so historical runs still report something usable.
+        deconv_method = (_dec.get('method_used')
+                         or _dec.get('method') or 'unknown')
+        if 'amplitude_method' in _pres:
+            amplitude_method = _pres['amplitude_method']
+            amplitude_method_resolved = 'file'
+        else:
+            logger.warning(
+                f"  {name}: {_meta_path.name} has no 'amplitude_method' - "
+                f"assuming '{_AMP_DEFAULT}'")
+            amplitude_method_resolved = 'fallback'
+        break
     else:
         logger.warning(
-            f"  {name}: no pipeline_results.json - assuming "
+            f"  {name}: no run_info.json or pipeline_results.json - assuming "
             f"amplitude_method='{_AMP_DEFAULT}'")
         amplitude_method_resolved = 'fallback'
 
@@ -591,6 +610,7 @@ def load_dataset_metrics(
     ds = DatasetMetrics(
         amplitude_method=amplitude_method,
         amplitude_method_resolved=amplitude_method_resolved,
+        deconv_method=deconv_method,
         name=name, filepath=str(result_path),
         n_neurons=N, n_confident=n_deconv_pass, n_selected=actual_n,
         n_hard_rejected=n_deconv_fail, n_overlap_removed=0,
