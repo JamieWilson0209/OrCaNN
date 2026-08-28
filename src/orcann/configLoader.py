@@ -78,7 +78,12 @@ class BaselineParams:
 class DeconvolutionParams:
     enabled: bool = True
     method: str = "oasis"             # oasis | robust
-    decay_time: Optional[float] = None  # seconds; null resolves from imaging.indicator
+    # Seeds OASIS's AR coefficient; it is NOT a measurement of how long these
+    # transients last. With optimize_g the solver refits per trace, and on this
+    # preparation it lands near 1.7 s against a 0.4 s indicator constant —
+    # observable fluorescence decay is the indicator convolved with a slower
+    # biological calcium decay.
+    decay_initialisation: Optional[float] = None  # seconds; null resolves from imaging.indicator
     optimize_g: bool = True
     noise_method: str = "mean"        # mean | median | logmexp
     s_min: float = 0.1                # min spike amplitude in dF/F0 (OASIS suppresses below this)
@@ -163,17 +168,22 @@ class Config:
         "analysis": ("inactive_file",),
     }
 
-    # ---- indicator -> decay time (s), used when deconvolution.decay_time is null
+    # ---- indicator -> decay constant (s), used when
+    # deconvolution.decay_initialisation is null
     INDICATOR_DECAY = {
         "gcamp6f": 0.4, "gcamp6s": 2.0, "jgcamp7f": 0.5, "jgcamp8f": 0.3,
         "jgcamp8m": 0.5, "jgcamp8s": 1.0, "fluo4": 0.4, "fluo-4": 0.4,
         "ogb1": 0.7, "ogb-1": 0.7, "jrgeco1a": 0.7,
     }
 
-    def decay_time(self) -> float:
-        """Resolved indicator decay time in seconds (explicit override wins)."""
-        if self.deconvolution.decay_time is not None:
-            return float(self.deconvolution.decay_time)
+    def decay_initialisation(self) -> float:
+        """Resolved AR seed in seconds (explicit override wins).
+
+        The indicator's own decay constant, used to initialise OASIS's g. Not
+        the decay of the transients in the data — see DeconvolutionParams.
+        """
+        if self.deconvolution.decay_initialisation is not None:
+            return float(self.deconvolution.decay_initialisation)
         key = str(self.imaging.indicator).strip().lower()
         return float(self.INDICATOR_DECAY.get(key, 0.4))
 
@@ -348,7 +358,7 @@ _FIELD_DOC = {
     "paths.analysis": "analysis stage output (group figures + tables)",
     "models.spatial": "trained segmenter (.pt)",
     "imaging.frame_rate": "recording frame rate in Hz",
-    "imaging.indicator": "calcium indicator; resolves a decay time when deconvolution.decay_time is null",
+    "imaging.indicator": "calcium indicator; resolves the AR seed when deconvolution.decay_initialisation is null",
     "spatial.threshold": "soma-probability cut, ~0.5-0.6",
     "spatial.watershed": "split touching cells (false = connected components, which merge them)",
     "spatial.min_distance": "min peak separation in px for watershed seeding",
@@ -363,7 +373,7 @@ _FIELD_DOC = {
     "baseline.max_window": "maximum rolling-baseline window (frames)",
     "baseline.presmooth_sigma": "Gaussian smoothing (frames) for F0 estimation only; lifts F0 to the true resting level on noisy traces; 0 = off",
     "deconvolution.enabled": "run OASIS spike inference (false = skip; analysis then has no spikes)",
-    "deconvolution.decay_time": "indicator decay time in s (null = resolve from imaging.indicator)",
+    "deconvolution.decay_initialisation": "indicator decay constant in s, seeding OASIS's AR coefficient; NOT a measured transient decay (null = resolve from imaging.indicator)",
     "deconvolution.optimize_g": "let OASIS fit the AR coefficient from data",
     "deconvolution.noise_method": "OASIS noise estimator: mean | median | logmexp",
     "deconvolution.s_min": "min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)",

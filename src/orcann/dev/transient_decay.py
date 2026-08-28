@@ -992,7 +992,7 @@ def _indicator_tau(datasets: List) -> Optional[float]:
     """The indicator decay time the activity stage actually used, or None.
 
     Read from each recording's ``run_info.json`` rather than taken as an
-    argument: the config's ``deconvolution.decay_time`` is usually null and is
+    argument: the config's ``deconvolution.decay_initialisation`` is usually null and is
     resolved from ``imaging.indicator`` downstream, so the resolved value is the
     only one that describes what the detector ran with. Recordings that disagree
     return None — a single reference line drawn across a mixture of indicators
@@ -1000,7 +1000,8 @@ def _indicator_tau(datasets: List) -> Optional[float]:
     """
     seen = set()
     for ds in datasets:
-        v = _run_info(ds).get("decay_time_s")
+        _ri = _run_info(ds)
+        v = _ri.get("decay_initialisation_s", _ri.get("decay_time_s"))
         if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
             seen.add(round(float(v), 6))
     if len(seen) == 1:

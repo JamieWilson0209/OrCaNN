@@ -470,7 +470,7 @@ def _deconvolve_oasis(
 
     # Initial AR(1) coefficient from decay time:  g = exp(-dt/τ)
     g_init = np.exp(-dt / decay_time)
-    logger.info(f"  OASIS: g_init={g_init:.4f} (τ={decay_time}s, dt={dt:.4f}s), "
+    logger.info(f"  OASIS: g_init={g_init:.4f} (AR seed τ={decay_time}s, dt={dt:.4f}s), "
                 f"s_min={s_min} ΔF/F₀, noise gate={noise_gate_sigma}σ")
 
     C_denoised = np.zeros((N, T), dtype=np.float32)
@@ -557,7 +557,9 @@ def _deconvolve_oasis(
     if len(g_valid) > 0:
         tau_fitted = -dt / np.log(np.clip(g_valid, 1e-10, 1 - 1e-10))
         logger.info(f"  ── DECAY PARAMETER DIAGNOSTICS ──")
-        logger.info(f"  Initial g (from τ={decay_time}s): {g_init:.4f}")
+        logger.info(f"  Seed g (from decay_initialisation τ={decay_time}s): {g_init:.4f}")
+        logger.info(f"  The seed is the indicator's constant; the fitted values "
+                    f"below are what the data actually decays at.")
         logger.info(f"  Fitted g:  median={np.median(g_valid):.4f}, "
                     f"mean={np.mean(g_valid):.4f}, "
                     f"range=[{np.min(g_valid):.4f}, {np.max(g_valid):.4f}]")
@@ -568,6 +570,12 @@ def _deconvolve_oasis(
                     f"median={np.median(tau_fitted)/decay_time:.1f}×, "
                     f"range=[{np.min(tau_fitted)/decay_time:.1f}×, "
                     f"{np.max(tau_fitted)/decay_time:.1f}×]")
+        _g_med = float(np.median(g_valid))
+        if _g_med > 0:
+            logger.info(f"  Implied onset cost: an event's 2nd frame sits at "
+                        f"{_g_med*100:.0f}% of peak, so requiring 2 frames above "
+                        f"k_onset makes the effective onset ~{1.0/_g_med:.1f}× the "
+                        f"configured multiple")
         pcts = np.percentile(tau_fitted, [5, 25, 50, 75, 95])
         logger.info(f"  τ percentiles: p5={pcts[0]:.3f}s, p25={pcts[1]:.3f}s, "
                     f"p50={pcts[2]:.3f}s, p75={pcts[3]:.3f}s, p95={pcts[4]:.3f}s")
@@ -756,6 +764,21 @@ def _deconvolve_robust(C, frame_rate, decay_time,
     n_spikes = np.zeros(N, dtype=np.int32)
     n_censored = np.zeros(N, dtype=np.int32)
     n_duration_rejected = 0
+
+    # What the configured duration actually became. int(round(s * fps)) is
+    # floored at 2 frames, because one sample above threshold is not evidence of
+    # an excursion — so below 4 Hz the effective minimum exceeds the configured
+    # one, silently until now. At 2 Hz a configured 0.5 s is really 1.0 s.
+    _req = int(round(min_duration_s * frame_rate))
+    _eff = max(2, _req)
+    if _eff != _req:
+        logger.info(
+            f"  Robust detector: min_duration_s={min_duration_s}s is "
+            f"{_req} frame(s) at {frame_rate} Hz, raised to the {_eff}-frame "
+            f"floor — effective minimum {_eff / frame_rate:.2f}s")
+    else:
+        logger.info(f"  Robust detector: min duration {_eff} frames "
+                    f"({_eff / frame_rate:.2f}s at {frame_rate} Hz)")
     for i in range(N):
         tr = C[i].astype(np.float64)
         bl = detector_baseline(tr, frame_rate, baseline_percentile,

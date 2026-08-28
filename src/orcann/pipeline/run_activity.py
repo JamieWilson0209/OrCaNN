@@ -144,7 +144,7 @@ def _deconvolve(cfg, c_dff):
     from orcann.activity.deconvolution import deconvolve_traces
     d = cfg.deconvolution
     res = deconvolve_traces(
-        c_dff, frame_rate=cfg.imaging.frame_rate, decay_time=cfg.decay_time(),
+        c_dff, frame_rate=cfg.imaging.frame_rate, decay_time=cfg.decay_initialisation(),
         method=d.method, optimize_g=d.optimize_g,
         noise_method=d.noise_method, s_min=d.s_min,
         noise_gate_sigma=d.noise_gate_sigma,
@@ -207,7 +207,10 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "stage": "activity (baseline + deconvolution)",
         "frame_rate": float(cfg.imaging.frame_rate),
         "indicator": cfg.imaging.indicator,
-        "decay_time_s": cfg.decay_time(),
+        # The AR seed, not a measured decay. decay_time_s is kept as well so
+        # recordings stay readable by code written against the old name.
+        "decay_initialisation_s": cfg.decay_initialisation(),
+        "decay_time_s": cfg.decay_initialisation(),
         "dims": [int(H), int(W)],
         "d1": int(H), "d2": int(W),
         "n_roi": int(c_dff.shape[0]),

@@ -20,7 +20,7 @@ models:
 # Recording-wide imaging metadata
 imaging:
   frame_rate: 2.0     # recording frame rate in Hz
-  indicator: "fluo4"  # calcium indicator; resolves a decay time when deconvolution.decay_time is null
+  indicator: "fluo4"  # calcium indicator; resolves the AR seed when deconvolution.decay_initialisation is null
 
 # Spatial detection (segmentation) knobs - used by segment
 spatial:
@@ -45,7 +45,11 @@ baseline:
 deconvolution:
   enabled: true               # run OASIS spike inference (false = skip; analysis then has no spikes)
   method: "oasis"             # oasis (AR deconvolution) | robust (deterministic transient detector). No fallback between them: a failure fails the run.
-  decay_time: null            # indicator decay time in s (null = resolve from imaging.indicator)
+  decay_initialisation: null  # indicator decay constant in s, seeding OASIS's AR coefficient.
+                              # NOT a measured transient decay: with optimize_g the solver
+                              # refits per trace and lands near 1.7s here, because observable
+                              # decay is the indicator convolved with slower calcium dynamics.
+                              # null = resolve from imaging.indicator
   optimize_g: true            # let OASIS fit the AR coefficient from data
   noise_method: "mean"        # OASIS noise estimator: mean | median | logmexp
   s_min: 0.1                  # min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)
