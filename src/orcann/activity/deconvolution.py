@@ -120,16 +120,19 @@ def deconvolve_traces(
     decay_time : float
         Indicator decay time constant in seconds (Fluo-4: ~0.4s).
     method : str
-        'oasis' (AR deconvolution, recommended where it fits), 'threshold'
-        (peak detection), or 'robust' (deterministic transient detector that
+        'oasis' (AR deconvolution, recommended where it fits) or 'robust'
+        (deterministic transient detector that
         prioritises catching obvious transients and rejecting noise, and never
         fails the way OASIS can).  On the 'oasis' path a robust safety net
         backfills any obvious transient OASIS missed unless disabled.
 
-        'oasis' raises RuntimeError if CaImAn is not importable: a solver
-        failure on a trace falls back to the threshold method, but a missing
-        dependency does not, because that would silently change the detection
-        method for the whole recording.
+        There is no fallback between methods. 'oasis' raises RuntimeError if
+        CaImAn is not importable, and again if the solver fails for the whole
+        recording; a trace whose solve fails is recorded in ``trace_rejected``
+        and carries no spike measurement. Substituting a different detector was
+        removed deliberately — it produced numbers indistinguishable from real
+        results, and the peak detector formerly used reported 4,951 spikes on a
+        silent ROI with ordinary photobleaching drift.
     penalty : float
         Sparsity penalty (L1). 0 = auto-tune (recommended for OASIS).
     optimize_g : bool
@@ -276,10 +279,18 @@ def deconvolve_traces(
             # problem as it being absent — do not degrade to another method.
             raise
         except Exception as e:
-            logger.warning(f"OASIS failed: {e}")
-            logger.info("Falling back to threshold deconvolution")
-            result = _deconvolve_threshold(C_dff, frame_rate, decay_time,
-                                           noise_gate_sigma=noise_gate_sigma)
+            # No fallback. Substituting a different detector for the whole
+            # recording produced numbers that looked like results and were not:
+            # the peak detector this used to fall back to reported 4,951 spikes
+            # on a silent ROI with ordinary photobleaching drift, against a truth
+            # of zero. For this data a failed run that says so is worth more than
+            # a completed one that quietly changed method.
+            raise RuntimeError(
+                f"OASIS deconvolution failed for this recording: {e}. No "
+                f"fallback detector is applied — rerun with "
+                f"deconvolution.method='robust' if you want the deterministic "
+                f"detector, which is a deliberate choice rather than a silent "
+                f"substitution.") from e
         # Safety net: OASIS can silently miss an obvious transient (a per-trace
         # solver failure zeroes the trace, or a conservative fit assigns a clear
         # event to baseline). Independently detect strong transients and backfill
@@ -293,9 +304,6 @@ def deconvolve_traces(
                 baseline_window_fraction=baseline_window_fraction,
                 baseline_min_window=baseline_min_window,
                 baseline_max_window=baseline_max_window)
-    elif method == 'threshold':
-        result = _deconvolve_threshold(C_dff, frame_rate, decay_time,
-                                       noise_gate_sigma=noise_gate_sigma)
     elif method == 'robust':
         result = _deconvolve_robust(
             C_dff, frame_rate, decay_time,
@@ -305,12 +313,23 @@ def deconvolve_traces(
                 baseline_window_fraction=baseline_window_fraction,
                 baseline_min_window=baseline_min_window,
                 baseline_max_window=baseline_max_window)
+    elif method == 'threshold':
+        raise ValueError(
+            "deconvolution.method='threshold' was removed. It was a peak "
+            "detector over a global 20th-percentile baseline with a refractory "
+            "period that collapsed to one frame at 2 Hz: on a silent ROI with "
+            "ordinary photobleaching drift it reported 4,951 spikes against a "
+            "truth of zero, and 83 on pure noise where oasis and robust "
+            "reported 0 and 1. Use 'robust', which needs no CaImAn either and "
+            "detected the same 120 real transients oasis did.")
     else:
-        raise ValueError(f"Unknown deconvolution method: {method}")
+        raise ValueError(
+            f"Unknown deconvolution method: {method!r}. Valid values: "
+            f"'oasis', 'robust'.")
 
-    # Every path must expose the same keys: _deconvolve_threshold never set
-    # this, and the safety net's `if not empty.any(): return` skipped creating
-    # it, so consumers hit KeyError on data-dependent runs. 0 is meaningful
+    # Every path must expose the same keys: the safety net's
+    # `if not empty.any(): return` skipped creating this, so consumers hit
+    # KeyError on data-dependent runs. 0 is meaningful
     # here, not a placeholder — OASIS zeroes S[:, :edge_frames] and
     # S[:, -edge_frames:], so a fitted ROI has no boundary event by construction.
     if 'n_spikes_censored' not in result:
@@ -324,6 +343,12 @@ def deconvolve_traces(
                 result[k][trace_rejected] = 0.0
         result['n_spikes'][trace_rejected] = 0
         result['n_spikes_censored'][trace_rejected] = 0
+    # Solver failures join the same bookkeeping: both mean "this ROI carries no
+    # spike measurement", and neither must be read downstream as a silent cell.
+    _failed = result.pop('trace_failed', None)
+    if _failed is not None and np.any(_failed):
+        trace_rejected = trace_rejected | np.asarray(_failed, bool)
+        n_rejected = int(trace_rejected.sum())
     result['trace_rejected'] = trace_rejected
     result['n_traces_rejected'] = n_rejected
     result['C_dff'] = C_dff
@@ -507,6 +532,7 @@ def _deconvolve_oasis(
     g_values = np.zeros((N, 1), dtype=np.float32)
     n_spikes = np.zeros(N, dtype=np.int32)
 
+    trace_failed = np.zeros(N, dtype=bool)
     n_success = 0
     n_failed = 0
     n_retry = 0
@@ -548,27 +574,33 @@ def _deconvolve_oasis(
             n_success += 1
 
         except Exception as e:
-            # Both OASIS attempts failed — use simple peak detection so a clear
-            # transient is never silently lost. Denoised is zeroed so downstream
-            # knows this trace was not properly deconvolved.
+            # Both OASIS attempts failed. The trace is recorded as failed, not
+            # handed to a different detector: a substituted result is
+            # indistinguishable from a real one downstream, and the peak
+            # detector formerly used here fabricated spikes on noise. Zeroed so
+            # nothing reads it as a measurement.
             C_denoised[i] = 0.0
-            S[i] = _simple_spike_detect(trace, frame_rate, decay_time,
-                                        noise_gate_sigma=noise_gate_sigma)
+            S[i] = 0.0
             noise_levels[i] = _mad_noise(trace)
             g_values[i, 0] = g_init
+            trace_failed[i] = True
             n_failed += 1
             if n_failed <= 3:
-                logger.warning(f"    OASIS failed on trace {i}: {e}")
+                logger.error(f"    OASIS failed on trace {i}: {e}")
 
         if (i + 1) % max(1, N // 5) == 0:
             logger.info(f"    Deconvolved {i + 1}/{N} traces")
 
     logger.info(f"  OASIS complete: {n_success} success "
-                f"({n_retry} via s_min=0 retry), {n_failed} peak-detection fallback")
-    if N and n_failed / N > 0.05:
-        logger.warning(f"  OASIS fell back on {n_failed}/{N} traces "
-                       f"({100*n_failed/N:.0f}%); check the trace units are ΔF/F₀ "
-                       f"and consider lowering deconvolution.s_min")
+                f"({n_retry} via s_min=0 retry), {n_failed} failed")
+    if n_failed:
+        logger.error(f"  {n_failed}/{N} trace(s) FAILED to deconvolve and carry no "
+                     f"spike measurement; check the trace units are ΔF/F₀ and "
+                     f"consider lowering deconvolution.s_min")
+    if N and n_failed == N:
+        raise RuntimeError(
+            f"OASIS failed on every one of {N} traces — this is a configuration "
+            f"or units problem, not a per-trace one.")
 
     # ── Decay parameter diagnostics ──────────────────────────────────────
     dt = 1.0 / frame_rate
@@ -688,78 +720,8 @@ def _deconvolve_oasis(
         'g':          g_values,
         'method':     'oasis',
         'n_spikes':   n_spikes,
+        'trace_failed': trace_failed,
     }
-
-
-def _deconvolve_threshold(C, frame_rate, decay_time,
-                          noise_gate_sigma=3.5) -> Dict[str, np.ndarray]:
-    """Simple threshold-based spike detection fallback.
-
-    Uses a ``noise_gate_sigma`` × MAD noise threshold to match the noise gate
-    applied to the OASIS path, so the two methods are consistent when OASIS is
-    unavailable.
-    """
-    from scipy.signal import find_peaks
-
-    N, T = C.shape
-    logger.info(f"  Threshold deconvolution: {N} traces, gate={noise_gate_sigma}σ")
-
-    S = np.zeros((N, T), dtype=np.float32)
-    baselines = np.zeros(N, dtype=np.float32)
-    noise_levels = np.zeros(N, dtype=np.float32)
-    n_spikes = np.zeros(N, dtype=np.int32)
-
-    min_distance = max(1, int(decay_time * frame_rate * 0.5))
-
-    for i in range(N):
-        trace = C[i]
-        noise = _mad_noise(trace)
-        baseline = np.percentile(trace, 20)
-
-        noise_levels[i] = noise
-        baselines[i] = baseline
-
-        if noise > 0:
-            # noise_gate_sigma × noise matches the gate on the OASIS path
-            height = baseline + noise_gate_sigma * noise
-            peaks, _ = find_peaks(
-                trace, height=height, distance=min_distance,
-            )
-            for pk in peaks:
-                S[i, pk] = trace[pk] - baseline
-            n_spikes[i] = len(peaks)
-
-    logger.info(f"  Threshold deconvolution: median {np.median(n_spikes):.0f} "
-                f"spikes/neuron")
-
-    return {
-        'C_denoised': C.copy(),
-        'S':          S,
-        'bl':         baselines,
-        'noise':      noise_levels,
-        'g':          np.full((N, 1), np.exp(-1.0 / (frame_rate * decay_time))),
-        'method':     'threshold',
-        'n_spikes':   n_spikes,
-    }
-
-
-def _simple_spike_detect(trace, frame_rate, decay_time, noise_gate_sigma=3.5):
-    """Quick spike detection for a single trace (OASIS per-trace fallback).
-
-    Uses a ``noise_gate_sigma`` × noise threshold to match the noise gate on the
-    main OASIS path.
-    """
-    from scipy.signal import find_peaks
-    S = np.zeros_like(trace)
-    noise = _mad_noise(trace)
-    baseline = np.percentile(trace, 20)
-    if noise > 0:
-        height = baseline + noise_gate_sigma * noise
-        peaks, _ = find_peaks(trace, height=height,
-                              distance=max(1, int(decay_time * frame_rate * 0.5)))
-        for pk in peaks:
-            S[pk] = trace[pk] - baseline
-    return S
 
 
 def _mad_noise(trace):

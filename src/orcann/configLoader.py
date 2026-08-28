@@ -77,7 +77,7 @@ class BaselineParams:
 @dataclass
 class DeconvolutionParams:
     enabled: bool = True
-    method: str = "oasis"             # oasis | threshold | robust
+    method: str = "oasis"             # oasis | robust
     decay_time: Optional[float] = None  # seconds; null resolves from imaging.indicator
     optimize_g: bool = True
     penalty: float = 0.0              # L1 sparsity; 0 = auto-tune (recommended for OASIS)
@@ -370,7 +370,7 @@ _FIELD_DOC = {
     "deconvolution.noise_method": "OASIS noise estimator: mean | median | logmexp",
     "deconvolution.s_min": "min spike amplitude in dF/F0; OASIS discards events below this (0 = let OASIS decide)",
     "deconvolution.noise_gate_sigma": "keep only spikes exceeding this multiple of the trace noise floor (0 = no gate)",
-    "deconvolution.method": "oasis (AR deconvolution) | threshold (peak detection) | robust (deterministic transient detector)",
+    "deconvolution.method": "oasis (AR deconvolution) | robust (deterministic transient detector); no fallback between them",
     "deconvolution.robust_safety_net": "on the oasis path, backfill clear transients OASIS missed (true recommended)",
     "deconvolution.robust_k_onset": "robust detector: event onset threshold as a multiple of noise",
     "deconvolution.robust_k_peak": "robust detector: required peak height as a multiple of noise (main precision knob)",

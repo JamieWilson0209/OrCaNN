@@ -44,7 +44,7 @@ baseline:
 # Spike deconvolution (OASIS) - second half of the activity stage
 deconvolution:
   enabled: true               # run OASIS spike inference (false = skip; analysis then has no spikes)
-  method: "oasis"             # oasis (AR deconvolution) | threshold (peak detection) | robust (deterministic transient detector)
+  method: "oasis"             # oasis (AR deconvolution) | robust (deterministic transient detector). No fallback between them: a failure fails the run.
   decay_time: null            # indicator decay time in s (null = resolve from imaging.indicator)
   optimize_g: true            # let OASIS fit the AR coefficient from data
   penalty: 0.0                # L1 sparsity penalty; 0 = auto-tune (recommended for OASIS)
