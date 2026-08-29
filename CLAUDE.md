@@ -74,6 +74,40 @@ Log at INFO what a reader would need to explain an unexpected number — what wa
 selected, excluded, deduplicated, and why. That is the level that was silently
 discarded before the handler existed.
 
+## Reviewing
+
+A module too large for one pass gets reviewed in parallel — one agent per file,
+all at once — followed by a sweep that reads their reports together. The per-file
+passes find defects; the sweep finds the ones whose cause and consequence sit in
+different files, which is most of what matters in this pipeline.
+
+Ask each per-file pass for two things: its findings, and the file's **outward
+contracts** — what it guarantees to its callers, field by field, with shapes,
+units, and, explicitly, the guarantees it does not enforce. The contracts are the
+load-bearing part. Without them the second pass is only a re-read; with them it
+can compose the files and see the paths that cross between them.
+
+Then do the sweep yourself rather than delegating it. What it catches that no
+single-file pass can:
+
+- **A defect visible only from both ends.** A function returning a compacted
+  array and a caller re-expanding it by guessing are each defensible alone.
+- **A fix defeated upstream of itself.** A consistency check is worthless if the
+  loader feeding it already substituted a default for the value being checked.
+- **Data written every run and read by nothing** — the producing half of a fix
+  shipped, the consuming half never written.
+- **A claim that is wrong.** Two passes agreed on a divergence that composition
+  showed unreachable, because the selection criterion upstream excluded the case
+  that would trigger it.
+
+Verify every finding against the code that consumes it before reporting it, and
+drop the ones that turn out unreachable rather than downgrading them — a review
+that reports plausible defects trains its reader to discount all of them. Say
+which findings you traced and which you could not.
+
+Fixing follows the same order: the cross-file chains first, since one change at
+the source usually closes several downstream findings at once.
+
 ## Environment
 
 The `orcann` conda env lacks `pandas` and `sklearn`, so `analysis/stats.py`,
@@ -87,6 +121,9 @@ Use `orcann-app`, which has the full set:
 ## Tests
 
 There is no test suite in this repository. Verify a change by running the code
-against fixtures you build, and say plainly in the commit what you ran. Work in
+against fixtures you build, and say plainly in the commit what you ran. The
+fixture that proves a fix is the one that reproduces the defect: build the input
+that triggered it, print what the code returns now alongside what it returned
+before, and let the two sit next to each other in the output. Work in
 progress whose method is still being decided lives behind `analysis.dev` in
 `src/orcann/dev/`; local notes and port plans go in `dev/`, which is gitignored.
