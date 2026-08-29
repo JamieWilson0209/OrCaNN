@@ -283,7 +283,11 @@ def run_analysis(
         writer = csv.writer(f)
         writer.writerow(['dataset'] + feat_labels)
         for i, name in enumerate(names):
-            writer.writerow([name] + [f'{X[i, j]:.4f}' for j in range(X.shape[1])])
+            # An empty field, not "nan": the CSV convention for a value that
+            # was not measured, and what pandas reads back as NaN.
+            writer.writerow([name] + [
+                f'{X[i, j]:.4f}' if np.isfinite(X[i, j]) else ''
+                for j in range(X.shape[1])])
     logger.info(f"Saved feature matrix: {csv_path}")
 
     # ── Save per-ROI listing ─────────────────────────────────────────────

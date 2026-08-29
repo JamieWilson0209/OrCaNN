@@ -47,7 +47,7 @@ from .metrics import (
     _get_neuron_rates, _get_neuron_amplitudes, _recording_metric,
     _pairwise_correlations, _synchrony_index,
     _measure_transient_amplitudes,
-    build_feature_matrix,
+    build_feature_matrix, complete_rows,
 )
 from ..figures._style import _fmt_p, _sig_stars, _draw_sig_bracket
 from ..figures.by_organoid import plot_by_organoid_panels
@@ -215,25 +215,33 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
         ('cv_iei', 'IEI Variability'),
     ]
     
-    X = np.zeros((n_ds, len(feature_attrs)))
+    X = np.full((n_ds, len(feature_attrs)), np.nan)
     for i, ds in enumerate(datasets):
         for j, (attr, _) in enumerate(feature_attrs):
             val = _recording_metric(ds, attr)
-            X[i, j] = val if val is not None else np.nan
+            if val is not None:
+                X[i, j] = val
 
-    # Impute NaN with column median (not zero — zero clusters excluded
-    # recordings at the origin, distorting the UMAP embedding)
-    for j in range(X.shape[1]):
-        col = X[:, j]
-        bad = ~np.isfinite(col)
-        if bad.any():
-            col[bad] = np.nanmedian(col[~bad]) if (~bad).any() else 0.0
+    # The clustered heatmap needs complete rows: a recording carrying an
+    # unmeasured feature is named and left out of it, rather than imputed to a
+    # cohort-typical position it was never measured to hold. The exclusion is
+    # the heatmap's alone — every other figure below still covers the full
+    # cohort, so `datasets` and `n_ds` are deliberately left untouched.
+    hm_keep = complete_rows(X)
+    if not hm_keep.all():
+        logger.warning(
+            "clustered heatmap excludes %d/%d recording(s) with an unmeasured "
+            "feature: %s", int((~hm_keep).sum()), n_ds,
+            ", ".join(datasets[i].name for i in np.flatnonzero(~hm_keep)))
+    hm_datasets = [d for d, k in zip(datasets, hm_keep) if k]
+    hm_colors = [c for c, k in zip(ds_colors, hm_keep) if k]
+    hm_n = len(hm_datasets)
 
-    X_std = StandardScaler().fit_transform(X)
+    X_std = (StandardScaler().fit_transform(X[hm_keep]) if hm_n >= 2 else None)
     feat_labels = [fl for _, fl in feature_attrs]
-    ds_names = [_abbrev(ds.name) for ds in datasets]
+    ds_names = [_abbrev(ds.name) for ds in hm_datasets]
     # Keep original names for genotype extraction — _abbrev loses the line field
-    ds_names_orig = [ds.name for ds in datasets]
+    ds_names_orig = [ds.name for ds in hm_datasets]
     
     rng = np.random.default_rng(42)
     
@@ -245,7 +253,13 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
     # FIGURE: Feature Heatmap (clustered)
     # =====================================================================
     try:
-        fig_height = max(12, n_ds * 0.18)
+        # Raised into the handler below so the reason reaches the log the
+        # same way any other heatmap failure does.
+        if X_std is None:
+            raise RuntimeError(
+                f"only {hm_n} recording(s) have a complete feature set; "
+                f"standardising needs at least 2")
+        fig_height = max(12, hm_n * 0.18)
         fig = plt.figure(figsize=(14, fig_height))
         fig.patch.set_facecolor('white')
         
@@ -253,16 +267,16 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
         gs = gridspec.GridSpec(1, 3, width_ratios=[0.2, 1, 0.05], wspace=0.05)
         
         # Hierarchical clustering
-        if n_ds > 2:
+        if hm_n > 2:
             linkage = hierarchy.linkage(pdist(X_std, 'euclidean'), method='ward')
             dendro = hierarchy.dendrogram(linkage, no_plot=True)
             row_order = dendro['leaves']
         else:
-            row_order = list(range(n_ds))
+            row_order = list(range(hm_n))
         
         # Dendrogram
         ax_dendro = fig.add_subplot(gs[0])
-        if n_ds > 2:
+        if hm_n > 2:
             hierarchy.dendrogram(linkage, orientation='left', ax=ax_dendro,
                                 leaf_rotation=0, leaf_font_size=1,
                                 above_threshold_color='#888888',
@@ -276,7 +290,7 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
         ax_heat = fig.add_subplot(gs[1])
         X_ordered = X_std[row_order, :]
         names_ordered = [ds_names[i] for i in row_order]
-        colors_ordered = [ds_colors[i] for i in row_order]
+        colors_ordered = [hm_colors[i] for i in row_order]
         orgs_ordered = [organoid_ids[i] for i in row_order]
         
         im = ax_heat.imshow(X_ordered, aspect='auto', cmap='RdBu_r',
@@ -284,10 +298,10 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
         
         ax_heat.set_xticks(range(len(feat_labels)))
         ax_heat.set_xticklabels(feat_labels, rotation=45, ha='right', fontsize=10)
-        ax_heat.set_yticks(range(n_ds))
+        ax_heat.set_yticks(range(hm_n))
         
         # Y-tick labels with organoid color coding
-        ylabels = [f'{orgs_ordered[i]}' for i in range(n_ds)]
+        ylabels = [f'{orgs_ordered[i]}' for i in range(hm_n)]
         ax_heat.set_yticklabels(ylabels, fontsize=6)
         for i, (label, color) in enumerate(zip(ax_heat.get_yticklabels(), colors_ordered)):
             label.set_color(color)

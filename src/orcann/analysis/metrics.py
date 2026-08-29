@@ -431,20 +431,32 @@ def _measure_transient_amplitudes(
 # =============================================================================
 
 def build_feature_matrix(datasets: List[DatasetMetrics]) -> Tuple[np.ndarray, List[str]]:
-    """Build (n_datasets, n_features) matrix from dataset metrics."""
+    """Build the (n_datasets, n_features) matrix, NaN where a value was not measured.
+
+    A recording with fewer than five selected neurons has no correlation or
+    synchrony value by design, and NaN is carried out of here rather than filled
+    in. Callers that need complete rows -- standardisation, clustering -- drop
+    those recordings with ``complete_rows`` and say which; callers that only
+    report the numbers write the absence as an absence.
+    """
     names = [d.name for d in datasets]
-    X = np.zeros((len(datasets), len(FEATURE_NAMES)))
+    X = np.full((len(datasets), len(FEATURE_NAMES)), np.nan)
     for i, ds in enumerate(datasets):
         for j, (attr, _) in enumerate(FEATURE_NAMES):
             val = _recording_metric(ds, attr)
-            X[i, j] = val if val is not None else 0.0
-
-    # Replace NaN/inf with column median
-    for j in range(X.shape[1]):
-        col = X[:, j]
-        bad = ~np.isfinite(col)
-        if bad.any():
-            col[bad] = np.nanmedian(col[~bad]) if (~bad).any() else 0.0
-
+            if val is not None:
+                X[i, j] = val
     return X, names
+
+
+def complete_rows(X: np.ndarray) -> np.ndarray:
+    """Mask of recordings whose every feature was measured.
+
+    Standardising and clustering need complete rows. Imputing the column median
+    would place a recording whose value could not be measured at a
+    cohort-typical position in the figure, indistinguishable from one actually
+    measured there — and it is the recordings with too few neurons to measure
+    that a reader most needs to see are absent.
+    """
+    return np.isfinite(X).all(axis=1)
 

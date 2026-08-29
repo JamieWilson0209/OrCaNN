@@ -32,7 +32,7 @@ from ..analysis.loading import (
 )
 from ..analysis.metrics import (
     _get_neuron_rates, _get_neuron_amplitudes, _recording_metric,
-    build_feature_matrix,
+    build_feature_matrix, complete_rows,
 )
 from ._style import _fmt_p, _sig_stars, _draw_sig_bracket
 
@@ -78,8 +78,23 @@ def generate_figures(
     colors = {1: default_color}
 
     # ── Main Results figures ───────────────────────────────────────────────
-    X_std = StandardScaler().fit_transform(X)
-    paths.append(_fig_feature_heatmap(X_std, names, feat_labels, labels, dirs['main_results']))
+    # Standardising needs complete rows, so recordings carrying an unmeasured
+    # feature are named and left out rather than imputed into the middle of it.
+    keep = complete_rows(X)
+    if not keep.all():
+        logger.warning(
+            "feature heatmap excludes %d/%d recording(s) with an unmeasured "
+            "feature: %s", int((~keep).sum()), len(names),
+            ", ".join(names[i] for i in np.flatnonzero(~keep)))
+    if keep.sum() < 2:
+        logger.error(
+            "feature heatmap skipped: %d recording(s) have a complete feature "
+            "set, and standardising needs at least 2", int(keep.sum()))
+    else:
+        X_std = StandardScaler().fit_transform(X[keep])
+        paths.append(_fig_feature_heatmap(
+            X_std, [n for n, k in zip(names, keep) if k], feat_labels,
+            labels[keep], dirs['main_results']))
     paths.append(_fig_neuron_distributions(datasets, labels, colors, dirs['overview']))
     
     # ── Per-recording correlation matrices ────────────────────────────────
