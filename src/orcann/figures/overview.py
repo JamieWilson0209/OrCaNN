@@ -862,7 +862,7 @@ def fig_selected_traces(datasets: List[DatasetMetrics], output_dir: str) -> List
 
 
 # =============================================================================
-# CORE ACTIVITY ANALYSIS (v1.6)
+# CORE ACTIVITY ANALYSIS
 # =============================================================================
 
 def fig_n_selected_distribution(datasets: List, output_dir: str,

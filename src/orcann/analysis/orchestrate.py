@@ -131,13 +131,16 @@ def run_analysis(
     logger.info(f"\nLoaded {len(all_datasets)} datasets")
 
     # ── Mark manually inactive datasets ──────────────────────────────────
-    # Datasets visually confirmed to have no activity: zero out spikes,
-    # set active fraction to 0, but keep them in the analysis for
-    # active fraction and demographic reporting.
+    # Datasets visually confirmed to have no activity. The spike-derived
+    # fields are zeroed and the recording is kept, so it still counts in the
+    # cohort demographics. Its correlation, synchrony, IEI and burst fields are
+    # left as measured, which is why a reader comparing them against a zeroed
+    # spike rate will see the two disagree.
     n_marked_inactive = 0
     for ds in all_datasets:
-        # Match by exact name, or bidirectional substring (handles cases where
-        # folder name is shorter or longer than the inactive list entry)
+        # Substring in either direction, so a list entry may be shorter or
+        # longer than the folder name. It is broad: an entry of "D115" marks
+        # every recording from that day, both genotypes included.
         is_inactive = (ds.name in inactive_names or
                        any(iname in ds.name or ds.name in iname 
                            for iname in inactive_names))
@@ -211,22 +214,11 @@ def run_analysis(
         ],
     }
     
-    # ── Create organized output directory structure ────────────────────────
-    # analysis/
-    # ├── figures/
-    # │   ├── 1 - Main Results/        UMAP, heatmap, between-organoid
-    # │   ├── 1b - Metrics/            Individual metric plots
-    # │   ├── Correlation Graphs/      Correlation matrices  
-    # │   └── Full Overview/           Population activity, quality, neuron selection
-    # └── data/
-    #     ├── analysis_results.json
-    #     ├── dataset_features.csv
-    #     └── quality_gating.json
-    
+    # Figures are grouped into numbered directories so the headline results
+    # read first; data/ holds the three machine-readable outputs.
     fig_dir = os.path.join(output_dir, 'figures')
     data_dir = os.path.join(output_dir, 'data')
-    
-    # New directory structure (v2.0: added genotype comparison)
+
     main_results_dir = os.path.join(fig_dir, '1 - Main Results')
     metrics_dir = os.path.join(fig_dir, '1b - Metrics')
     genotype_dir = os.path.join(fig_dir, '2 - Genotype Comparison')

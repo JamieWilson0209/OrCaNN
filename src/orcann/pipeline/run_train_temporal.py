@@ -8,7 +8,7 @@ save_final, and the training knobs). Two independent outputs, either or both per
   - final model (deployment): one model fit on ALL kept data and saved to
     ``save_final`` (this is what the detect_transients stage loads).
 
-They no longer exclude each other, so a normal run validates AND saves a model.
+The two are independent, so a normal run validates AND saves a model.
 Set ``report: null`` to skip validation (save only); set ``save_final: null`` to
 skip the final fit (validate only). indicator_map.json maps each .mat filename to
 an indicator label; grouping is by indicator and cell class. ``synthetic=True``

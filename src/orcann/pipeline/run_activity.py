@@ -195,11 +195,10 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "n_roi": int(c_dff.shape[0]),
         "n_frames": int(c_dff.shape[1]),
         "baseline": {"method": cfg.baseline.method, "percentile": cfg.baseline.percentile},
-        # method_used is what the detector reported having done, rather than
-        # what was asked for. Since 10df777 removed the fallback paths the two
-        # always agree, so there is no method_fallback flag any more — but the
-        # observed value is still what gets recorded and what the cohort check
-        # reads, so a future divergence cannot go unnoticed.
+        # method_used is what the detector reported having done; method is
+        # what the config asked for. No fallback can switch between them, so
+        # the two agree — recording the observed value anyway is what would
+        # make a future divergence visible rather than silent.
         "deconvolution": {"enabled": cfg.deconvolution.enabled,
                           "method": cfg.deconvolution.method,
                           "method_used": deconv_used,

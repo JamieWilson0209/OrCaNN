@@ -180,7 +180,6 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
     Generate publication-quality visualizations for many-dataset comparisons.
     
     Produces separate figures:
-    - dataset_umap.png — Clean UMAP projection (publication style)
     - dataset_heatmap.png — Clustered heatmap of standardized features  
     - metric_*.png — Individual metric plots grouped by organoid and day
     """
@@ -244,10 +243,6 @@ def run_dataset_overview(datasets: List[DatasetMetrics], output_dir: str) -> dic
     ds_names_orig = [ds.name for ds in hm_datasets]
     
     rng = np.random.default_rng(42)
-    
-    # =====================================================================
-    # UMAP — removed (unreliable with small dataset counts)
-    # =====================================================================
     
     # =====================================================================
     # FIGURE: Feature Heatmap (clustered)
@@ -1865,9 +1860,8 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
             logger.warning(f"  {ds.name}: {e}; skipping peak figures")
             continue
         dims = info.dims
-        # The activity stage records the movie it read as `source`. This looked
-        # for `config.movie` and `movie`, keys no writer has ever produced, so
-        # the movie was never found and every peak figure rendered without it.
+        # The activity stage records the movie it read as `source`. Absent or
+        # moved, the peak figures draw traces without their frames.
         movie_path = info.source
         if movie_path and os.path.exists(movie_path):
             try:

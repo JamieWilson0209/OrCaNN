@@ -1,34 +1,24 @@
-"""The per-recording ``run_info.json`` contract: one writer, one reader, one schema.
+"""The per-recording record every stage writes, and the one reader for it.
 
-Every stage that records what it did, and every stage that later asks, goes
-through this module. That is the whole point of it. Before it existed the file
-was assembled inline by ``run_activity`` and interrogated by four separate
-``.get()`` chains scattered across ``analysis/``, each guessing at a slightly
-different shape, and the guesses drifted apart: the analysis stage spent months
-reading the frame rate from ``info['config']['frame_rate']``, a nesting the
-writer had stopped producing, and silently substituted 2.0 Hz for every
-recording without one line of evidence in any output.
+Every record opens with ``schema_version`` then ``stage``, so a reader
+establishes what it is holding before interpreting anything else. The files keep
+their own names because each lives beside the data it describes.
 
-Two rules keep that from recurring.
+Two rules hold the format together.
 
-**The file declares its schema.** ``schema_version`` is written at the top and
-checked on read; a file that does not declare one, or declares a version this
-code does not know, is refused by name rather than parsed on the assumption that
-its keys mean what today's keys mean. Six mutually incompatible generations of
-this file exist in the results directories on disk, distinguishable only by
-guessing from which keys happen to be present. Refusing them is the point:
-reading an old file with new assumptions is how a pipeline reports a number that
-is wrong rather than absent. This follows the same rule as BIDS, whose readers
-check ``BIDSVersion`` before trusting a dataset.
+**A record declares its schema.** ``read_record`` refuses a file that carries no
+version, or a version it does not know, rather than reading its keys as though
+they meant what today's keys mean. Several incompatible generations of these
+files exist in the results directories, distinguishable only by guessing from
+which keys happen to be present; refusing them is the point, and the message
+says to re-run the stage that writes it.
 
-**The file is always valid JSON.** ``NaN`` and ``Infinity`` are not JSON values
-(RFC 8259 admits no such literals), but Python's ``json`` module emits them as
-bare tokens by default, producing a file that Python alone can read back and
-that ``jq``, ``JSON.parse`` and R's ``jsonlite`` all reject. Non-finite values
-are converted to ``null`` on the way out — a measurement that could not be made
-is absent, which is what ``null`` means — and ``allow_nan=False`` makes any that
-escape the conversion raise at the point of writing rather than producing a file
-that fails somewhere else, later, in another language.
+**A record is always valid JSON.** NaN and Infinity are not JSON values (RFC
+8259 admits no such literals) but Python's ``json`` emits them as bare tokens,
+giving a file only Python can read back. Non-finite values are written as
+``null`` — a measurement that could not be made is absent — and
+``allow_nan=False`` turns anything the sanitiser misses into an error here
+rather than a parse failure elsewhere.
 """
 
 from __future__ import annotations

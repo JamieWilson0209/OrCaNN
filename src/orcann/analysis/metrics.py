@@ -215,7 +215,10 @@ def _synchrony_index(C: np.ndarray, fraction_threshold: float = 0.20,
     pop_coupling = float(np.mean(np.maximum(pop_r, 0)))
 
     # ── 2. Co-activation fraction ────────────────────────────────────────
-    # Use denoised traces: a neuron is "active" if above baseline + 2σ noise
+    # "Active" is baseline + 2σ, where σ comes from frame-to-frame differences.
+    # C is the OASIS reconstruction and carries no noise, so this σ tracks the
+    # decay step and therefore the signal: the threshold scales with amplitude
+    # instead of being fixed relative to it. Unverified against real traces.
     diffs = np.diff(C, axis=1)
     noise = np.median(np.abs(diffs), axis=1) / 0.6745
     noise[noise == 0] = 1e-10
@@ -226,7 +229,9 @@ def _synchrony_index(C: np.ndarray, fraction_threshold: float = 0.20,
     coactivation = float((frac_per_frame >= fraction_threshold).mean())
 
     # ── Combine: weighted mean ───────────────────────────────────────────
-    # Population coupling is more robust; co-activation captures burst events
+    # A correlation coefficient and a fraction of frames, blended 60/40. The
+    # weights are a judgement, not a calibration, and the sum has no units and
+    # no null value, so it compares runs only against each other.
     sync_index = 0.6 * pop_coupling + 0.4 * coactivation
 
     return float(np.clip(sync_index, 0, 1))

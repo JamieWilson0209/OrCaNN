@@ -212,7 +212,7 @@ def write_figures(out: str, model, traces: np.ndarray, rates: np.ndarray,
 
     The segment stage writes only the instance overlay (unlabelled outlines);
     the interactive per-ROI trace view is the activity stage's HTML gallery, so
-    this no longer renders per-ROI temporal panels. The unused
+    per-ROI temporal panels are not rendered here. The unused
     ``model``/``rates``/``detection`` parameters are kept for call-site
     compatibility with the shared writer signature.
     """

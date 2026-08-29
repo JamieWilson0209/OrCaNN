@@ -153,9 +153,7 @@ class DatasetMetrics:
     baseline_drift: float = 0.0       # population-mean drift ratio (Q4-Q1)/std
     baseline_drift_excluded: bool = False
 
-    # Amplitude tracking (from run_info.json, populated if available)
-
-    # Genotype (v2.0)
+    # Genotype
     genotype: str = ''                 # 'Control', 'Mutant', or 'Unknown'
     
     # Manual override
@@ -561,9 +559,9 @@ def load_dataset_metrics(
     logger.info(f"    baseline_drift={drift_ratio:.3f}")
 
     # ── Motion quality ───────────────────────────────────────────────────
-    # Missing metadata is NaN, never zero. A recording that never went through
-    # motion correction has unknown motion; scoring it 0.0 made it the cleanest
-    # in the cohort and passed every gate. The gate treats NaN as an exclusion.
+    # NaN, not zero, when the metadata is absent: a recording that never went
+    # through motion correction has unknown motion, and the quality gate reads
+    # NaN as an exclusion rather than as a clean recording.
     shifts_path = result_path / 'data' / 'motion_shifts.npy'
     mc_info = info.motion
 
@@ -617,9 +615,9 @@ def load_dataset_metrics(
     ds.neuron_spike_amplitudes = neuron_amps
 
     # ── Free large trace arrays to reduce memory ────────────────────────
-    # The full (N, T) matrices are only needed for per-dataset diagnostic
-    # figures; we keep them only for a limited number of datasets.
-    # Dataset-level metrics are already computed above.
+    # Dropped for every dataset, so a large cohort stays bounded in memory.
+    # Every metric that needs them is computed above; a figure that wants a
+    # trace reloads it from disk for the one recording it is drawing.
     ds.selected_traces = None
     ds.selected_raw_traces = None
     ds.selected_spikes = None
