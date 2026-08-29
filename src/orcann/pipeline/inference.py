@@ -10,12 +10,13 @@ docs/README.md for the full output contract.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Dict, Optional, Tuple
 
 import numpy as np
+
+from orcann.run_info import write_record
 
 
 # CANONICAL FILENAMES — the single source of truth for the contract.
@@ -182,7 +183,6 @@ def write_recording(out_root: str, rec_id: str, *,
 
     meta = {
         "recording_id": rec_id,
-        "stage": stage,
         "frame_rate": float(frame_rate),
         "n_roi": int(traces.shape[0]),
         "n_frames": int(traces.shape[1]),
@@ -199,8 +199,7 @@ def write_recording(out_root: str, rec_id: str, *,
     }
     if extra_meta:
         meta.update(extra_meta)
-    with open(os.path.join(data, META_JSON), "w") as f:
-        json.dump(meta, f, indent=2)
+    write_record(os.path.join(data, META_JSON), stage, meta)
     return out
 
 

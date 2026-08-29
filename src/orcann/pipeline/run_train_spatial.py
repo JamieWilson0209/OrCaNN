@@ -5,7 +5,6 @@ the training knobs). Masks are instance-label .npy (from rasterize_rois) or Imag
 ROI sets, paired to movies by filename stem. Use synthetic=True for a self-test.
 """
 import glob
-import json
 import os
 
 import numpy as np
@@ -14,6 +13,7 @@ from orcann.spatial import (
     train_segmenter, load_seg_recording, synthetic_sources,
     predict_prob, segment_instances, best_iou, SegRecording)
 from orcann.pipeline.model_io import save_model
+from orcann.run_info import write_record
 
 
 def find_pairs(movies_dir, masks_dir):
@@ -92,5 +92,4 @@ def run(cfg, synthetic=False):
         print("final model trained on all data; assess from downstream results.")
     if t.report:
         os.makedirs(os.path.dirname(t.report) or ".", exist_ok=True)
-        with open(t.report, "w") as f:
-            json.dump(metrics, f, indent=2)
+        write_record(t.report, "train_spatial", metrics)

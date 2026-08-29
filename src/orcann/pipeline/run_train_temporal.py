@@ -21,6 +21,7 @@ import os
 from orcann.temporal import (
     load_cascade_mat, synthetic_indicator_bank, run_loio, train_final)
 from orcann.pipeline.model_io import save_model
+from orcann.run_info import write_record
 
 
 def run(cfg, synthetic=False):
@@ -58,7 +59,7 @@ def run(cfg, synthetic=False):
                   f"| n_test {r['n_test_windows']}")
         if t.report and not synthetic:
             os.makedirs(os.path.dirname(t.report) or ".", exist_ok=True)
-            json.dump(report, open(t.report, "w"), indent=2)
+            write_record(t.report, "train_temporal", {"loio_table": report})
             print(f"wrote LOIO table -> {t.report}")
 
     # deployable model: fit on ALL data and save. Independent of the table above;

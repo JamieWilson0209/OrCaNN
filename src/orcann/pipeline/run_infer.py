@@ -7,7 +7,6 @@ enabled it also writes prob_overlay.png, a QC image of the gamma-stretched
 probability map over a translucent max projection. Recordings whose prob.npy
 already exists are skipped unless force=True.
 """
-import json
 import os
 
 import numpy as np
@@ -15,6 +14,7 @@ import numpy as np
 from orcann.pipeline import inference as infer
 from orcann.pipeline.cli import list_recordings
 from orcann.pipeline.model_io import load_model
+from orcann.run_info import write_record
 
 
 def _pick_device():
@@ -47,11 +47,11 @@ def run(cfg, task_id=None, force=False):
         os.makedirs(d, exist_ok=True)
         np.save(os.path.join(d, infer.PROB_NPY), prob)
         np.save(os.path.join(d, infer.MAXPROJ_NPY), maxproj)
-        with open(os.path.join(d, infer.META_JSON), "w") as fh:
-            json.dump({"recording_id": rec_id, "stage": "infer",
-                       "working_hw": [int(prob.shape[0]), int(prob.shape[1])],
-                       "n_frames": n_frames, "source": os.path.abspath(f),
-                       "model": os.path.abspath(cfg.models.spatial)}, fh, indent=2)
+        write_record(os.path.join(d, infer.META_JSON), "infer",
+                     {"recording_id": rec_id,
+                      "working_hw": [int(prob.shape[0]), int(prob.shape[1])],
+                      "n_frames": n_frames, "source": os.path.abspath(f),
+                      "model": os.path.abspath(cfg.models.spatial)})
         if cfg.figures.enabled:
             from orcann.pipeline.figures import prob_overlay_figure
             prob_overlay_figure(os.path.join(d, "prob_overlay.png"), prob, maxproj,

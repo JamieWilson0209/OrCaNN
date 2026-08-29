@@ -5,12 +5,12 @@ runs in the caiman env. Each recording is corrected and written as
 <stem>_mc.tif (T,H,W float32) plus <stem>_mc.json (shift summary). Recordings whose
 corrected movie already exists are skipped unless force=True.
 """
-import json
 import os
 
 import numpy as np
 
 from orcann.pipeline.cli import list_recordings
+from orcann.run_info import write_record
 
 
 def _done(pre_dir, stem):
@@ -42,8 +42,8 @@ def run(cfg, task_id=None, force=False):
         out_mov = os.path.join(pre, stem + "_mc.tif")
         tifffile.imwrite(out_mov, res.corrected.astype(np.float32))
         s = res.summary()
-        with open(os.path.join(pre, stem + "_mc.json"), "w") as fh:
-            json.dump(s, fh, indent=2)
+        write_record(os.path.join(pre, stem + "_mc.json"),
+                     "motion_correction", dict(s, recording_id=stem))
         # Per-frame [dy, dx] shifts, so the activity stage can carry them into
         # results/activity/ for the analysis stage's residual-motion QC metric.
         if getattr(res, "shifts", None) is not None:
