@@ -66,7 +66,7 @@ class SpatialParams:
 # --- activity stage: baseline + deconvolution (calcium bridge) ---------------
 @dataclass
 class BaselineParams:
-    method: str = "global_dff"        # direct | global_dff
+    method: str = "global_dff"        # global_dff (per-trace rolling percentile)
     percentile: float = 8.0
     window_fraction: float = 0.25
     min_window: int = 50
@@ -240,8 +240,12 @@ class Config:
 
     def dump(self, path: str) -> None:
         if path.endswith(".json"):
+            # Same writer as every stage record, so an exported config is
+            # strictly valid JSON by the same rule and not a round-trip through
+            # dumps/loads that happens to normalise most things.
+            from orcann.run_info import dump as dump_json
             with open(path, "w") as f:
-                json.dump(json.loads(json.dumps(self.to_dict())), f, indent=2)
+                dump_json(self.to_dict(), f)
             return
         with open(path, "w") as f:
             f.write(self._to_commented_yaml())
@@ -366,7 +370,7 @@ _FIELD_DOC = {
     "spatial.min_radius": "or drop regions below this equivalent radius in px",
     "spatial.resize_to": "force each frame to NxN when pixel size is unknown (0 = off)",
     "spatial.train_um_per_px": "override the model's recorded training pixel size (null = use model's)",
-    "baseline.method": "direct | global_dff (per-trace rolling percentile)",
+    "baseline.method": "global_dff (per-trace rolling percentile); the only supported method",
     "baseline.percentile": "baseline percentile for global_dff",
     "baseline.window_fraction": "rolling-baseline window as a fraction of trace length",
     "baseline.min_window": "minimum rolling-baseline window (frames)",

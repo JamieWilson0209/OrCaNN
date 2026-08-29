@@ -1,8 +1,8 @@
 """
 Dataset loading and per-dataset feature extraction.
 
-Loads pipeline output directories, applies edge ROI exclusion and distance
-deduplication, scores neuron quality, and constructs a DatasetMetrics object
+Loads pipeline output directories, deduplicates detections, scores neuron
+quality, and constructs a DatasetMetrics object
 holding the per-recording summary plus per-neuron arrays for downstream
 metric computation.
 
@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 import numpy as np
+
+from ..run_info import read as read_run_info, RunInfoError
 
 logger = logging.getLogger(__name__)
 
@@ -90,45 +92,6 @@ def _trace_snr(trace: np.ndarray) -> float:
     return float(signal / noise)
 
 
-def _load_valid_mask(result_path) -> np.ndarray:
-    """
-    Return a boolean mask of valid ROIs for a dataset.
-
-    Boundary-touching ROIs are excluded at detection time (v2.1+),
-    so all saved ROIs are valid.  For backwards compatibility with
-    older results that include boundary ROIs, the boundary_touching
-    file is checked if present.
-    """
-    from pathlib import Path
-    result_path = Path(result_path)
-
-    # Try to infer N from spike trains
-    spikes_path = result_path / 'data' / 'spike_trains.npy'
-    traces_path = result_path / 'data' / 'temporal_traces.npy'
-    if spikes_path.exists():
-        N = np.load(spikes_path, mmap_mode='r').shape[0]
-    elif traces_path.exists():
-        N = np.load(traces_path, mmap_mode='r').shape[0]
-    else:
-        return None
-
-    mask = np.ones(N, dtype=bool)
-
-    # Backwards compat: exclude boundary ROIs from older pipeline runs
-    boundary_path = result_path / 'boundary_touching.npy'
-    if boundary_path.exists():
-        boundary = np.load(boundary_path).astype(bool)
-        if len(boundary) == N:
-            mask &= ~boundary
-
-    return mask
-
-
-def _has_corrupted_values(trace: np.ndarray, threshold: float = 1e6) -> bool:
-    """Check if a trace has corrupted/overflow values (e.g. 1e9+)."""
-    return bool(np.any(np.abs(trace) > threshold))
-
-
 @dataclass
 class DatasetMetrics:
     """Per-dataset summary metrics extracted from pipeline outputs."""
@@ -157,7 +120,7 @@ class DatasetMetrics:
 
     # Per-neuron arrays (selected neurons) — precomputed to avoid storing full traces
     neuron_spike_rates: Optional[np.ndarray] = None      # (n_selected,) events/10s
-    neuron_spike_amplitudes: Optional[np.ndarray] = None  # (n_selected,) mean dF/F per neuron
+    neuron_spike_amplitudes: Optional[np.ndarray] = None  # (n_selected,) mean dF/F per neuron; NaN = not measured
     neuron_is_active: Optional[np.ndarray] = None         # (n_selected,) bool: ≥1 validated transient
 
     # Dataset-level metrics (computed from SELECTED neurons only)
@@ -176,14 +139,14 @@ class DatasetMetrics:
     mean_quality_score: float = 0.0
 
     # Temporal
-    frame_rate: float = 2.0
+    frame_rate: float = 0.0            # always set from imaging.frame_rate
     n_frames: int = 0
     duration_seconds: float = 0.0
 
     # Motion quality
-    motion_max_shift: float = 0.0
-    motion_mean_shift: float = 0.0
-    motion_residual_std: float = 0.0
+    motion_max_shift: float = float('nan')   # NaN = no motion metadata recorded
+    motion_mean_shift: float = float('nan')
+    motion_residual_std: float = float('nan')
     motion_excluded: bool = False
 
     # Baseline drift quality
@@ -191,13 +154,9 @@ class DatasetMetrics:
     baseline_drift_excluded: bool = False
 
     # Amplitude tracking (from run_info.json, populated if available)
-    amplitude_tracking: Optional[List] = None  # per-stage amplitude diagnostics
 
     # Genotype (v2.0)
     genotype: str = ''                 # 'Control', 'Mutant', or 'Unknown'
-    amplitude_method: str = ''         # how spike amplitudes were measured
-    amplitude_method_resolved: str = ''  # 'file' | 'default' | 'fallback'
-    deconv_method: str = ''            # the detector that actually ran
     
     # Manual override
     manually_inactive: bool = False    # True if visually confirmed no activity
@@ -228,8 +187,7 @@ FEATURE_NAMES = [
 def load_dataset_metrics(
     result_dir: str,
     name: str,
-
-    frame_rate_override: Optional[float] = None,
+    frame_rate: float,
     min_roi_distance: float = 15.0,
 ) -> Optional[DatasetMetrics]:
     """Load pipeline outputs, score neuron quality, select by threshold.
@@ -265,59 +223,25 @@ def load_dataset_metrics(
 
     C_raw = np.load(traces_path)
 
-    # Load raw fluorescence traces (for local ΔF/F amplitude measurement)
-    raw_fluor_path = result_path / 'data' / 'temporal_traces_raw.npy'
-    C_raw_fluorescence = np.load(raw_fluor_path) if raw_fluor_path.exists() else None
+    # Everything this recording records about how it was produced, parsed and
+    # version-checked once for the whole function. See orcann/run_info.py.
+    try:
+        info = read_run_info(result_path)
+    except RunInfoError as e:
+        logger.error(f"  {name}: {e}")
+        return None
 
-    # Which method measured this recording's spike amplitudes. Not cosmetic:
-    # 'direct' measures each event from raw fluorescence, 'global_dff' from
-    # corrected traces, so a cohort mixing the two pools two definitions.
-    # The default is announced when it is used, and recorded on the dataset so
-    # the mix is detectable rather than assumed.
-    _AMP_DEFAULT = 'global_dff'
-    amplitude_method = _AMP_DEFAULT
-    deconv_method = 'unknown'
-    amplitude_method_resolved = 'default'      # 'file' | 'default' | 'fallback'
-
-    # run_info.json is what the activity stage writes; pipeline_results.json is
-    # the calcium pipeline's name for the same file. Both are tried, current name
-    # first, so recordings from either pipeline load.
-    for _meta_path in (result_path / 'run_info.json',
-                       result_path / 'pipeline_results.json'):
-        if not _meta_path.exists():
-            continue
-        try:
-            import json as _json
-            with open(_meta_path) as _f:
-                _pres = _json.load(_f)
-        except Exception as e:
-            logger.warning(
-                f"  {name}: could not read {_meta_path.name} ({e}) - falling "
-                f"back to amplitude_method='{_AMP_DEFAULT}'. Spike amplitudes "
-                f"for this recording may not be comparable with the cohort.")
-            amplitude_method_resolved = 'fallback'
-            break
-
-        _dec = _pres.get('deconvolution') or {}
-        # method_used is absent from recordings processed before it was
-        # recorded; fall back to the configured method, which was all that
-        # existed then, so historical runs still report something usable.
-        deconv_method = (_dec.get('method_used')
-                         or _dec.get('method') or 'unknown')
-        if 'amplitude_method' in _pres:
-            amplitude_method = _pres['amplitude_method']
-            amplitude_method_resolved = 'file'
-        else:
-            logger.warning(
-                f"  {name}: {_meta_path.name} has no 'amplitude_method' - "
-                f"assuming '{_AMP_DEFAULT}'")
-            amplitude_method_resolved = 'fallback'
-        break
-    else:
-        logger.warning(
-            f"  {name}: no run_info.json or pipeline_results.json - assuming "
-            f"amplitude_method='{_AMP_DEFAULT}'")
-        amplitude_method_resolved = 'fallback'
+    # A cohort mixing amplitude methods pools two definitions of amplitude into
+    # one comparison, so an unsupported method is refused rather than assumed
+    # into the cohort.
+    AMPLITUDE_METHOD = 'global_dff'
+    if info.amplitude_method != AMPLITUDE_METHOD:
+        logger.error(
+            f"  {name}: amplitude_method="
+            f"{info.amplitude_method or '<absent>'!r} is not supported (only "
+            f"{AMPLITUDE_METHOD!r} is) - skipping. Re-run the activity stage "
+            f"for this recording to analyse it.")
+        return None
 
     # Load deconvolved data
     has_deconv = denoised_path.exists() and spikes_path.exists()
@@ -328,28 +252,7 @@ def load_dataset_metrics(
         logger.warning(f"  {name}: no deconvolution data — quality selection not possible, skipping")
         return None
 
-    # Load and apply edge ROI exclusion
-    boundary_path = result_path / 'boundary_touching.npy'
-    if boundary_path.exists():
-        boundary = np.load(boundary_path).astype(bool)
-        n_edge = int(boundary.sum())
-        if n_edge > 0:
-            logger.info(f"  {name}: excluding {n_edge} edge ROIs")
-    else:
-        boundary = np.zeros(C_denoised.shape[0], dtype=bool)
-
-    info_path = result_path / 'run_info.json'
-    frame_rate = frame_rate_override or 2.0
-    amp_tracking_data = None
-    if info_path.exists():
-        with open(info_path) as f:
-            info = json.load(f)
-            config = info.get('config', {})
-            frame_rate = frame_rate_override or config.get('frame_rate', 2.0)
-            amp_tracking_data = info.get('amplitude_tracking', None)
-            if amp_tracking_data:
-                logger.info(f"  {name}: loaded amplitude tracking ({len(amp_tracking_data)} stages)")
-
+    # frame_rate comes from imaging.frame_rate in the config and nowhere else.
     N, T = C_denoised.shape
     duration = T / frame_rate
     dur_min = duration / 60.0
@@ -381,11 +284,6 @@ def load_dataset_metrics(
     S_sel = S[sel_idx]
     R_sel = C_raw[sel_idx]
 
-    # Raw fluorescence traces for local ΔF/F amplitude measurement
-    R_fluor_sel = None
-    if C_raw_fluorescence is not None:
-        R_fluor_sel = C_raw_fluorescence[sel_idx]
-
     # ── Load spatial footprints and compute ROI crops ────────────────────
     # Each crop is a dict with 'max_proj', 'baseline', 'contour' arrays
     roi_crops = None
@@ -393,21 +291,12 @@ def load_dataset_metrics(
     footprint_path = result_path / 'data' / 'spatial_footprints.npz'
     max_proj_path = result_path / 'data' / 'max_projection.npy'
     mean_proj_path = result_path / 'data' / 'mean_projection.npy'
-    info_path_spatial = result_path / 'run_info.json'
     try:
         if footprint_path.exists():
             from scipy.sparse import load_npz
             A_sparse = load_npz(footprint_path)
 
-            # Get image dimensions
-            dims = None
-            if info_path_spatial.exists():
-                with open(info_path_spatial) as _f:
-                    _info = json.load(_f)
-                    if 'dims' in _info:
-                        dims = tuple(_info['dims'])
-                    elif 'd1' in _info and 'd2' in _info:
-                        dims = (int(_info['d1']), int(_info['d2']))
+            dims = info.dims
 
             # Load projection images if available
             max_proj = np.load(max_proj_path) if max_proj_path.exists() else None
@@ -470,85 +359,102 @@ def load_dataset_metrics(
         logger.warning(f"  {name}: spatial crop extraction failed: {e}")
         roi_crops = None
 
-    # ── Distance deduplication: remove ROIs closer than min_roi_distance ──
-    # Two detections with centres < min_roi_distance pixels apart are
-    # effectively sampling the same structure.  Keeping both inflates n
-    # and creates correlated duplicates.  The higher-SNR one is kept.
-    roi_snr = np.array([_trace_snr(C_sel[j]) for j in range(actual_n)])
-    n_distance_removed = 0
-    if A_sparse is not None and min_roi_distance > 0 and actual_n >= 2:
+    # ── Distance deduplication: remove detections closer than min_roi_distance ──
+    # Two detections whose centres are < min_roi_distance apart are sampling the
+    # same structure, so keeping both counts one cell twice. This runs over every
+    # detection rather than only the active ones: a duplicate of a silent cell is
+    # still not a second cell, and removing only its active twin would shrink the
+    # numerator of active_fraction while leaving the denominator untouched.
+    # Where a pair has to be resolved the detection carrying more evidence wins:
+    # one with deconvolved events over one without, then higher trace SNR.
+    roi_snr_all = np.array([_trace_snr(C_denoised[i]) for i in range(N)])
+    roi_snr_all[~np.isfinite(roi_snr_all)] = -np.inf
+    roi_keep = np.ones(N, dtype=bool)
+
+    if min_roi_distance > 0 and N >= 2 and A_sparse is None:
+        logger.error(
+            f"  {name}: no spatial_footprints.npz, so duplicate detections "
+            f"cannot be removed - every count below treats a duplicate as a "
+            f"separate cell.")
+    elif min_roi_distance > 0 and N >= 2:
         try:
-            _dims = None
-            _info_path = result_path / 'run_info.json'
-            if _info_path.exists():
-                with open(_info_path) as _f:
-                    _info_data = json.load(_f)
-                    if 'dims' in _info_data:
-                        _dims = tuple(_info_data['dims'])
-                    elif 'd1' in _info_data and 'd2' in _info_data:
-                        _dims = (int(_info_data['d1']), int(_info_data['d2']))
-
-            if _dims is not None:
+            _dims = info.dims
+            if _dims is None:
+                logger.error(
+                    f"  {name}: no image dimensions recorded, so duplicate "
+                    f"detections cannot be removed - every count below treats "
+                    f"a duplicate as a separate cell.")
+            else:
                 d1, d2 = _dims
-                centroids = np.zeros((actual_n, 2))
-                centroid_valid = np.ones(actual_n, dtype=bool)
-
-                for ci in range(actual_n):
-                    roi_col = int(original_roi_idx[ci])
-                    if roi_col >= A_sparse.shape[1]:
+                centroids = np.zeros((N, 2))
+                centroid_valid = np.ones(N, dtype=bool)
+                for ci in range(N):
+                    if ci >= A_sparse.shape[1]:
                         centroid_valid[ci] = False
                         continue
-                    fp = A_sparse[:, roi_col].toarray().ravel()
+                    fp = A_sparse[:, ci].toarray().ravel()
                     if len(fp) != d1 * d2:
                         centroid_valid[ci] = False
                         continue
-                    fp_2d = fp.reshape(d1, d2)
-                    ys, xs = np.where(fp_2d > 0)
+                    ys, xs = np.where(fp.reshape(d1, d2) > 0)
                     if len(ys) == 0:
                         centroid_valid[ci] = False
                         continue
                     centroids[ci] = [np.mean(ys), np.mean(xs)]
 
-                dist_keep = np.ones(actual_n, dtype=bool)
-                for ci in range(actual_n):
-                    if not dist_keep[ci] or not centroid_valid[ci]:
+                for ci in range(N):
+                    if not roi_keep[ci] or not centroid_valid[ci]:
                         continue
-                    for cj in range(ci + 1, actual_n):
-                        if not dist_keep[cj] or not centroid_valid[cj]:
+                    for cj in range(ci + 1, N):
+                        if not roi_keep[cj] or not centroid_valid[cj]:
                             continue
                         dist = np.sqrt((centroids[ci, 0] - centroids[cj, 0])**2 +
                                        (centroids[ci, 1] - centroids[cj, 1])**2)
-                        if dist < min_roi_distance:
-                            if roi_snr[ci] >= roi_snr[cj]:
-                                dist_keep[cj] = False
-                            else:
-                                dist_keep[ci] = False
-                                break
-                            n_distance_removed += 1
-
-                if n_distance_removed > 0:
-                    logger.info(f"  {name}: removing {n_distance_removed}/{actual_n} "
-                                f"ROIs closer than {min_roi_distance:.0f}px")
-                    sel_idx = sel_idx[dist_keep]
-                    original_roi_idx = original_roi_idx[dist_keep]
-                    C_sel = C_sel[dist_keep]
-                    S_sel = S_sel[dist_keep]
-                    R_sel = R_sel[dist_keep]
-                    roi_snr = roi_snr[dist_keep]
-                    if R_fluor_sel is not None:
-                        R_fluor_sel = R_fluor_sel[dist_keep]
-                    if roi_crops is not None:
-                        roi_crops = [c for c, k in zip(roi_crops, dist_keep) if k]
-                    actual_n = len(sel_idx)
-                    if actual_n < 3:
-                        logger.warning(f"  {name}: only {actual_n} neurons remain after "
-                                       f"distance filter, skipping dataset")
-                        return None
+                        if dist >= min_roi_distance:
+                            continue
+                        if ((bool(sel_mask[ci]), roi_snr_all[ci]) >=
+                                (bool(sel_mask[cj]), roi_snr_all[cj])):
+                            roi_keep[cj] = False
+                        else:
+                            roi_keep[ci] = False
+                            break
         except Exception as e:
-            logger.warning(f"  {name}: centroid distance filter failed: {e}")
+            logger.error(
+                f"  {name}: duplicate removal failed ({e}) - every count below "
+                f"treats a duplicate as a separate cell.")
+            roi_keep = np.ones(N, dtype=bool)
 
-    logger.info(f"  {name}: selected {actual_n}/{N} ROIs "
-                f"({n_deconv_fail} deconv failures, {n_distance_removed} distance-deduped)")
+    # Derived from the mask rather than tallied inside the loop, so the count
+    # and the mask cannot disagree about how many detections were removed.
+    n_distance_removed = int((~roi_keep).sum())
+    n_detections = int(roi_keep.sum())
+
+    _keep_sel = roi_keep[original_roi_idx]
+    if not _keep_sel.all():
+        sel_idx = sel_idx[_keep_sel]
+        original_roi_idx = original_roi_idx[_keep_sel]
+        C_sel = C_sel[_keep_sel]
+        S_sel = S_sel[_keep_sel]
+        R_sel = R_sel[_keep_sel]
+        if roi_crops is not None:
+            roi_crops = [c for c, k in zip(roi_crops, _keep_sel) if k]
+        actual_n = len(sel_idx)
+    roi_snr = roi_snr_all[original_roi_idx]
+
+    if n_distance_removed:
+        logger.info(f"  {name}: removed {n_distance_removed}/{N} duplicate "
+                    f"detections closer than {min_roi_distance:.0f}px")
+    if actual_n < 3:
+        logger.warning(f"  {name}: only {actual_n} neurons remain after the "
+                       f"distance filter, skipping dataset")
+        return None
+
+    # Detections that survived deduplication but carry no deconvolved events.
+    n_deconv_fail_kept = n_detections - actual_n
+
+    logger.info(f"  {name}: selected {actual_n}/{n_detections} distinct cells "
+                f"({n_deconv_fail_kept} without deconvolved events, "
+                f"{n_distance_removed} duplicate detections removed)")
 
     # ── Compute metrics from SELECTED neurons ────────────────────────────
     # Spike rates (events per 10 seconds)
@@ -557,23 +463,23 @@ def load_dataset_metrics(
     mean_spike_rate = float(np.mean(spike_rates))
     median_spike_rate = float(np.median(spike_rates))
 
-    # Spike amplitudes — method depends on how the activity stage computed ΔF/F:
-    #   direct: measure each event as local ΔF/F from raw fluorescence
-    #   global_dff: measure from corrected traces
-    # 'local_dff' is a historical spelling; matching it keeps older recordings
-    # classified the way they were actually computed.
-    _use_local = amplitude_method in ('direct', 'local_dff')
-    _amp_raw = R_fluor_sel if _use_local else None
-    all_amps = _measure_transient_amplitudes(
-        C_sel, S_sel, frame_rate, C_raw_fluorescence=_amp_raw)
-    mean_spike_amp = float(np.mean(all_amps)) if all_amps else 0.0
+    # Spike amplitudes, measured on the corrected traces the activity stage
+    # wrote. One entry per selected neuron, NaN where nothing was measurable.
+    neuron_amps = _measure_transient_amplitudes(C_sel, S_sel, frame_rate)
+    _amp_measured = np.isfinite(neuron_amps)
+    mean_spike_amp = (float(np.mean(neuron_amps[_amp_measured]))
+                      if _amp_measured.any() else 0.0)
 
     # Detailed per-neuron log for verification
     logger.info(f"  {name}: duration={duration:.1f}s ({dur_min:.2f} min), "
                 f"spike counts per neuron: {spike_counts.tolist()}")
     logger.info(f"  {name}: rates/10s: {[f'{r:.1f}' for r in spike_rates]}")
-    if all_amps:
-        logger.info(f"  {name}: transient amplitudes (ΔF/F₀): {[f'{a:.3f}' for a in all_amps]}")
+    if _amp_measured.any():
+        logger.info(f"  {name}: transient amplitudes (ΔF/F₀): "
+                    f"{[f'{a:.3f}' for a in neuron_amps[_amp_measured]]}")
+    if not _amp_measured.all():
+        logger.warning(f"  {name}: {int((~_amp_measured).sum())}/{actual_n} neurons "
+                       f"spiked but produced no measurable transient")
 
     # ── Correlation and synchrony ──────────────────────────────────────────
     # Uses DENOISED TRACES (C_sel) for correlation/synchrony - see docstrings
@@ -584,7 +490,7 @@ def load_dataset_metrics(
     MIN_N_CORR = 5
     if actual_n >= MIN_N_CORR:
         corr_mean, _ = _pairwise_correlations(C_sel, S=S_sel)
-        sync_idx = _synchrony_index(C_sel, S=S_sel, frame_rate=frame_rate)
+        sync_idx = _synchrony_index(C_sel, S=S_sel)
     else:
         corr_mean = float('nan')
         sync_idx  = float('nan')
@@ -600,12 +506,9 @@ def load_dataset_metrics(
     n_bursts, burst_rate_val, burst_part = _network_bursts_from_spikes(S_sel, frame_rate)
 
     ds = DatasetMetrics(
-        amplitude_method=amplitude_method,
-        amplitude_method_resolved=amplitude_method_resolved,
-        deconv_method=deconv_method,
         name=name, filepath=str(result_path),
-        n_neurons=N, n_confident=n_deconv_pass, n_selected=actual_n,
-        n_hard_rejected=n_deconv_fail, n_overlap_removed=0,
+        n_neurons=n_detections, n_confident=n_deconv_pass, n_selected=actual_n,
+        n_hard_rejected=n_deconv_fail_kept, n_overlap_removed=0,
         n_distance_removed=n_distance_removed,
         selected_indices=sel_idx,
         selected_roi_indices=original_roi_idx,
@@ -658,16 +561,21 @@ def load_dataset_metrics(
     logger.info(f"    baseline_drift={drift_ratio:.3f}")
 
     # ── Motion quality ───────────────────────────────────────────────────
+    # Missing metadata is NaN, never zero. A recording that never went through
+    # motion correction has unknown motion; scoring it 0.0 made it the cleanest
+    # in the cohort and passed every gate. The gate treats NaN as an exclusion.
     shifts_path = result_path / 'data' / 'motion_shifts.npy'
-    mc_info = {}
-    if info_path.exists():
-        with open(info_path) as f:
-            mc_info = json.load(f).get('motion_correction', {})
+    mc_info = info.motion
 
-    motion_max = mc_info.get('max_shift_y', 0.0) + mc_info.get('max_shift_x', 0.0)
-    motion_mean = mc_info.get('mean_shift_y', 0.0) + mc_info.get('mean_shift_x', 0.0)
+    def _shift_sum(key_y, key_x):
+        if key_y in mc_info and key_x in mc_info:
+            return float(mc_info[key_y]) + float(mc_info[key_x])
+        return float('nan')
 
-    motion_residual = 0.0
+    motion_max = _shift_sum('max_shift_y', 'max_shift_x')
+    motion_mean = _shift_sum('mean_shift_y', 'mean_shift_x')
+
+    motion_residual = float('nan')
     if shifts_path.exists():
         shifts = np.load(shifts_path)
         if shifts.ndim == 2 and shifts.shape[0] > 2:
@@ -680,7 +588,6 @@ def load_dataset_metrics(
     ds.motion_mean_shift = float(motion_mean)
     ds.motion_residual_std = motion_residual
     ds.baseline_drift = drift_ratio
-    ds.amplitude_tracking = amp_tracking_data
 
     # ── Precompute per-neuron arrays (for genotype analysis) ─────────────
     # These allow us to free the full (N, T) trace matrices below.
@@ -696,35 +603,18 @@ def load_dataset_metrics(
     # selection AND showed genuine activity.
     ds.neuron_is_active = ds.neuron_spike_rates > 0
     ds.n_active = int(ds.neuron_is_active.sum())
-    ds.active_fraction = ds.n_active / max(N, 1)
+    ds.active_fraction = ds.n_active / max(n_detections, 1)
     
-    logger.info(f"  {name}: active fraction = {ds.n_active}/{N} "
+    logger.info(f"  {name}: active fraction = {ds.n_active}/{n_detections} "
                 f"({ds.active_fraction:.1%}) "
-                f"[{ds.n_active} active selected out of {N} total detections]")
+                f"[active cells out of distinct detected cells]")
 
-    # Inactive-recording gate: fewer than 3 neurons with any spikes makes
-    # within-recording statistics (correlation, synchrony, MAD-based outlier
-    # detection) unreliable. Classify these as inactive and drop from analysis.
-    if ds.n_active < 3:
-        logger.warning(f"  {name}: only {ds.n_active} active neurons, "
-                       f"classifying as inactive and skipping")
-        return None
-    all_amps_list = _measure_transient_amplitudes(
-        C_sel, S_sel, frame_rate, C_raw_fluorescence=_amp_raw)
-    # _measure_transient_amplitudes skips neurons with no spikes, so its length
-    # may be < actual_n. Build a per-neuron array with 0.0 for silent neurons.
-    if len(all_amps_list) == actual_n:
-        ds.neuron_spike_amplitudes = np.array(all_amps_list)
-    else:
-        # Recompute per-neuron to get correct alignment
-        per_neuron_amps = np.zeros(actual_n)
-        amp_idx = 0
-        for j in range(actual_n):
-            spike_frames = np.where(S_sel[j] > 0)[0]
-            if len(spike_frames) > 0 and amp_idx < len(all_amps_list):
-                per_neuron_amps[j] = all_amps_list[amp_idx]
-                amp_idx += 1
-        ds.neuron_spike_amplitudes = per_neuron_amps
+    # Measured once above and already indexed by neuron.
+    if len(neuron_amps) != actual_n:
+        raise ValueError(
+            f"{name}: amplitude array has {len(neuron_amps)} entries for "
+            f"{actual_n} selected neurons")
+    ds.neuron_spike_amplitudes = neuron_amps
 
     # ── Free large trace arrays to reduce memory ────────────────────────
     # The full (N, T) matrices are only needed for per-dataset diagnostic

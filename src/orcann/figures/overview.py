@@ -28,7 +28,7 @@ from sklearn.preprocessing import StandardScaler
 from ..analysis.loading import (
     DatasetMetrics, FEATURE_NAMES, _abbrev,
     _extract_organoid_id, _extract_genotype,
-    _trace_snr, _load_valid_mask,
+    _trace_snr,
 )
 from ..analysis.metrics import (
     _get_neuron_rates, _get_neuron_amplitudes, _recording_metric,
@@ -194,14 +194,8 @@ def _fig_correlation_matrices_split(datasets, labels, colors, corr_dir):
         else:
             continue
         
-        # Exclude edge ROIs
-        valid = _load_valid_mask(result_path)
-        if valid is not None and len(valid) == C_all.shape[0]:
-            valid_idx = np.where(valid)[0]
-            C = C_all[valid_idx]
-        else:
-            valid_idx = np.arange(C_all.shape[0])
-            C = C_all
+        valid_idx = np.arange(C_all.shape[0])
+        C = C_all
         N = C.shape[0]
         
         if N < 3:
@@ -408,13 +402,11 @@ def _fig_bar_charts(datasets, labels, colors, output_dir, per_metric_dir=None):
     # ── Collect per-dataset metrics ──────────────────────────────────────
     per_ds = []
     for ds in datasets:
+        # Each panel plots its own array. The two index different neuron
+        # subsets, so padding one to the other's length pairs a neuron's rate
+        # with another neuron's amplitude and drags the amplitude mean down.
         rates = _get_neuron_rates(ds)
         amps = _get_neuron_amplitudes(ds)
-        # Ensure amps matches rates length (some neurons may have no spikes)
-        if len(rates) > 0 and len(amps) != len(rates):
-            aligned = np.zeros(len(rates))
-            aligned[:len(amps)] = amps[:len(rates)]
-            amps = aligned
         per_ds.append({
             'rates': rates,
             'amps': amps,

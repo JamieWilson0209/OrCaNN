@@ -53,16 +53,20 @@ def _get_neuron_rates(ds) -> np.ndarray:
 
 
 def _get_neuron_amplitudes(ds) -> np.ndarray:
-    """Get per-neuron spike amplitudes for ACTIVE neurons only (amp > 0)."""
+    """Per-neuron amplitudes for neurons that have a measured transient.
+
+    Drops NaN (never measured) as well as non-positive values, so the result
+    is shorter than n_selected and cannot be indexed against the per-neuron
+    arrays or zipped with _get_neuron_rates.
+    """
     if ds.neuron_spike_amplitudes is not None and len(ds.neuron_spike_amplitudes) > 0:
         amps = ds.neuron_spike_amplitudes
-        return amps[amps > 0]
+        return amps[np.isfinite(amps) & (amps > 0)]
     if ds.selected_traces is None or ds.selected_spikes is None:
         return np.array([])
     amps = _measure_transient_amplitudes(
         ds.selected_traces, ds.selected_spikes, ds.frame_rate)
-    amps = np.array(amps) if amps else np.array([])
-    return amps[amps > 0] if len(amps) > 0 else amps
+    return amps[np.isfinite(amps) & (amps > 0)]
 
 
 def _recording_metric(ds, attr: str):
@@ -146,8 +150,7 @@ def _pairwise_correlations(C: np.ndarray,
 
 
 def _synchrony_index(C: np.ndarray, fraction_threshold: float = 0.20,
-                     S: Optional[np.ndarray] = None,
-                     frame_rate: float = 2.0) -> float:
+                     S: Optional[np.ndarray] = None) -> float:
     """Compute population synchrony index from denoised calcium traces.
 
     Uses two complementary approaches and returns their weighted mean:
@@ -172,8 +175,6 @@ def _synchrony_index(C: np.ndarray, fraction_threshold: float = 0.20,
         Minimum fraction of neurons co-active for a "synchronous" frame.
     S : array (N, T), optional
         Deconvolved spike trains (not used for primary metric).
-    frame_rate : float
-        Sampling rate in Hz.
 
     Returns
     -------
@@ -336,26 +337,21 @@ def _network_bursts_from_spikes(
 
 def _measure_transient_amplitudes(
     C: np.ndarray, S: np.ndarray, frame_rate: float,
-    C_raw_fluorescence: Optional[np.ndarray] = None,
     baseline_window_s: float = 1.0,
     baseline_offset_s: float = 0.2,
     peak_window_s: float = 0.5,
-) -> List[float]:
+) -> np.ndarray:
     """
-    Measure calcium transient amplitudes as local ΔF/F₀ per event.
-    
+    Measure calcium transient amplitudes as a local ΔF/F₀ increment per event.
+
     For each detected spike event, computes the amplitude as:
-        amplitude = (peak_F - baseline_F) / baseline_F
-    
-    where baseline_F and peak_F come from the raw fluorescence trace
-    (if available) rather than the globally corrected ΔF/F₀ trace.
-    This makes each event self-referenced: its amplitude reflects the
-    actual calcium-driven fluorescence increase relative to the
-    immediately preceding baseline, independent of any global drift,
-    bleach correction, or baseline estimation artefacts.
-    
-    When raw fluorescence traces are not available, falls back to
-    measuring peak − baseline on the denoised trace (legacy behaviour).
+        amplitude = peak - baseline
+
+    on the denoised trace the activity stage wrote, which is already ΔF/F₀.
+    The difference is therefore the event's rise above its own pre-event
+    baseline, self-referenced and independent of slow drift over the
+    recording.  There is one measurement method, so amplitudes are
+    comparable across every recording the analysis will load.
     
     Parameters
     ----------
@@ -366,10 +362,6 @@ def _measure_transient_amplitudes(
         Deconvolved spike trains from OASIS (used only for spike timing).
     frame_rate : float
         Imaging frame rate in Hz.
-    C_raw_fluorescence : array (N, T), optional
-        Raw fluorescence traces (NOT ΔF/F).  If provided, amplitudes are
-        measured as local ΔF/F from these traces, giving robust event
-        amplitudes independent of global baseline correction.
     baseline_window_s : float
         Duration of window before spike for baseline estimation (default 1.0s).
     baseline_offset_s : float
@@ -379,25 +371,26 @@ def _measure_transient_amplitudes(
     
     Returns
     -------
-    amplitudes : list of float
-        Per-neuron mean transient amplitudes in ΔF/F₀ units.
-        Returns empty list if no valid transients found.
+    amplitudes : array (N,)
+        Per-neuron mean transient amplitude in ΔF/F₀ units, indexed to match
+        the rows of ``C`` and ``S``.  A neuron with no measurable transient is
+        ``np.nan``, which is not the same as zero: a neuron can spike and still
+        yield no valid event, because events too close to the recording start,
+        events on a baseline at or below zero, and events with a non-positive
+        amplitude are all skipped.
     """
     N, T = C.shape
-    use_raw = C_raw_fluorescence is not None and C_raw_fluorescence.shape == C.shape
     
-    if use_raw:
-        logger.debug("  Measuring transient amplitudes from raw fluorescence (local ΔF/F)")
     
     # Convert time windows to frames
     baseline_frames = max(1, int(baseline_window_s * frame_rate))
     offset_frames = max(1, int(baseline_offset_s * frame_rate))
     peak_frames = max(1, int(peak_window_s * frame_rate))
     
-    neuron_amplitudes = []
+    neuron_amplitudes = np.full(N, np.nan, dtype=float)
     
     for j in range(N):
-        trace_for_amp = C_raw_fluorescence[j] if use_raw else C[j]
+        trace_for_amp = C[j]
         spikes = S[j]
         
         spike_frames = np.where(spikes > 0)[0]
@@ -418,21 +411,15 @@ def _measure_transient_amplitudes(
             baseline = np.median(trace_for_amp[bl_start:bl_end])
             peak_val = np.max(trace_for_amp[pk_start:pk_end])
             
-            if use_raw:
-                # Local ΔF/F: (peak - baseline) / baseline
-                if baseline > 1e-6:
-                    amp = (peak_val - baseline) / baseline
-                else:
-                    continue
-            else:
-                # Fallback: absolute difference on denoised trace
-                amp = peak_val - baseline
+            # Both terms are already ΔF/F₀, so their difference is the
+            # event's rise above its own pre-event baseline.
+            amp = peak_val - baseline
             
             if amp > 0:
                 transient_amps.append(amp)
         
         if len(transient_amps) > 0:
-            neuron_amplitudes.append(float(np.mean(transient_amps)))
+            neuron_amplitudes[j] = float(np.mean(transient_amps))
     
     return neuron_amplitudes
 
@@ -461,96 +448,3 @@ def build_feature_matrix(datasets: List[DatasetMetrics]) -> Tuple[np.ndarray, Li
 
     return X, names
 
-
-
-# =============================================================================
-
-
-# =============================================================================
-# Z-SCORE / OUTLIER FLAGGING
-# =============================================================================
-
-def _zscore_within_dataset(values: np.ndarray) -> np.ndarray:
-    """Z-score normalise values within a single dataset.
-
-    Parameters
-    ----------
-    values : array (n_neurons,)
-        Per-neuron metric values from one dataset.
-
-    Returns
-    -------
-    z : array (n_neurons,)
-        Z-scored values.  Returns zeros if std ~ 0.
-    """
-    mu = np.mean(values)
-    sigma = np.std(values, ddof=1) if len(values) > 1 else 0.0
-    if sigma < 1e-10:
-        return np.zeros_like(values)
-    return (values - mu) / sigma
-
-
-def _flag_suspicious_neurons(spike_train: np.ndarray, dur_s: float,
-                             z_thresh: float = 3.0):
-    """Flag neurons with anomalously high amplitude or frequency within a dataset.
-
-    Uses MAD-based modified Z-scores so that one or two extreme neurons
-    don't inflate the scale and mask themselves.
-
-    A threshold of 3.0 (modified Z-score) corresponds roughly to the top
-    ~1% in a normal distribution.  This is intentionally conservative —
-    we want to flag only genuinely suspicious neurons (neuropil, vessels,
-    merged cells) rather than normal biological variation.
-
-    Parameters
-    ----------
-    spike_train : array (n_neurons, T)
-        Spike trains for the selected neurons.
-    dur_s : float
-        Recording duration in seconds.
-    z_thresh : float
-        Modified Z-score threshold for flagging (default 3.0).
-
-    Returns
-    -------
-    dict with:
-        'flagged'     : bool array (n_neurons,) — True = suspicious
-        'amp_z'       : float array — per-neuron amplitude Z-scores
-        'freq_z'      : float array — per-neuron frequency Z-scores
-        'n_flagged'   : int
-        'rates'       : float array — spike rates (events/10s)
-        'amps'        : float array — mean spike amplitudes
-    """
-    n = spike_train.shape[0]
-    rates = np.zeros(n)
-    amps = np.zeros(n)
-
-    for j in range(n):
-        spk = spike_train[j]
-        spike_frames = spk[spk > 0]
-        rates[j] = len(spike_frames) / dur_s * 10.0 if dur_s > 0 else 0
-        amps[j] = float(np.mean(spike_frames)) if len(spike_frames) > 0 else 0.0
-
-    def _mad_z(arr):
-        """Modified Z-score using median absolute deviation."""
-        med = np.median(arr)
-        mad = np.median(np.abs(arr - med))
-        if mad < 1e-10:
-            return np.zeros_like(arr)
-        return 0.6745 * (arr - med) / mad
-
-    amp_z = _mad_z(amps)
-    freq_z = _mad_z(rates)
-
-    # Flag neurons that are HIGH outliers on EITHER metric
-    # Only flag high side — low amplitude / frequency is just quiet, not suspicious
-    flagged = (amp_z > z_thresh) | (freq_z > z_thresh)
-
-    return {
-        'flagged': flagged,
-        'amp_z': amp_z,
-        'freq_z': freq_z,
-        'n_flagged': int(flagged.sum()),
-        'rates': rates,
-        'amps': amps,
-    }

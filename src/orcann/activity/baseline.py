@@ -202,7 +202,7 @@ def _compute_dff_stats(C_dff, baseline_drift_pcts, n_clipped, T):
 
 def compute_dff_traces(
     C_raw: np.ndarray,
-    frame_rate: float = 2.0,
+    frame_rate: float,
     percentile: float = 8.0,
     window_fraction: float = 0.25,
     min_window: int = 50,

@@ -149,13 +149,12 @@ def _run_info(ds) -> Dict:
 def _frame_rate(ds, default: float) -> float:
     """The recording's own frame rate, from ``run_info.json`` where it exists.
 
-    ``ds.frame_rate`` cannot be trusted for this: ``loading.load_dataset_metrics``
-    reads the rate from a ``config`` sub-dict of run_info.json, and
-    ``run_activity`` writes ``frame_rate`` at the top level of that file, so the
-    lookup misses and every dataset carries the global override instead. Every
-    number this module reports is a count of frames divided by this value, so a
-    recording imaged at a different rate would be wrong end to end — durations,
-    onsets and peak times alike — with nothing on the figure to show it.
+Every number this module reports is a count of frames divided by this value, so
+    a recording imaged at a different rate would be wrong end to end — durations,
+    onsets and peak times alike — with nothing on the figure to show it. The
+    recording's own record is preferred over ``ds.frame_rate`` for that reason,
+    even though the two now agree: the config rate is what the analysis stage
+    applied, and this is what the recording says it was.
     """
     v = _run_info(ds).get("frame_rate")
     if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
@@ -1001,7 +1000,7 @@ def _indicator_tau(datasets: List) -> Optional[float]:
     seen = set()
     for ds in datasets:
         _ri = _run_info(ds)
-        v = _ri.get("decay_initialisation_s", _ri.get("decay_time_s"))
+        v = _ri.get("decay_initialisation_s")
         if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
             seen.add(round(float(v), 6))
     if len(seen) == 1:
@@ -1348,7 +1347,7 @@ def _figure_clustering(rows: List[Dict], path: str, *,
 def run_transient_decay(datasets: List, output_dir: str, *,
                         deconv_method: str = "oasis",
                         k_onset: float = 3.0,
-                        frame_rate: float = 2.0,
+                        frame_rate: float,
                         mutant_label: str = "Mutant") -> Dict:
     """Entry point. Returns a summary dict, or ``{'skipped': reason}``.
 

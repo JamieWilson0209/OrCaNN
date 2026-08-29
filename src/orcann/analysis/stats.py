@@ -38,6 +38,7 @@ import matplotlib.patheffects as path_effects
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
+from ..run_info import read as read_run_info, RunInfoError
 from .loading import (
     DatasetMetrics, FEATURE_NAMES, _abbrev,
     _extract_organoid_id, _extract_genotype, _extract_line_id,
@@ -509,16 +510,15 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
         return rates[rates > 0]
 
     def _ds_spike_amplitudes(ds):
-        """Return amplitudes for ACTIVE neurons only (amplitude > 0)."""
+        """Return amplitudes for neurons that have a measured transient."""
         if ds.neuron_spike_amplitudes is not None:
             amps = ds.neuron_spike_amplitudes
-            return amps[amps > 0]
+            return amps[np.isfinite(amps) & (amps > 0)]
         if ds.selected_traces is None or ds.selected_spikes is None:
             return np.array([])
         amps = _measure_transient_amplitudes(
             ds.selected_traces, ds.selected_spikes, ds.frame_rate)
-        amps = np.array(amps) if amps else np.array([])
-        return amps[amps > 0] if len(amps) > 0 else amps
+        return amps[np.isfinite(amps) & (amps > 0)]
 
     # ── Colour scheme ────────────────────────────────────────────────────
     CTRL_COLOR = '#4472C4'   # blue
@@ -1831,7 +1831,6 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
         spikes_path    = result_path / 'data' / 'spike_trains.npy'
         noise_path     = result_path / 'data' / 'deconv_noise.npy'
         footprint_path = result_path / 'data' / 'spatial_footprints.npz'
-        info_path      = result_path / 'run_info.json'
 
         if not denoised_path.exists() or not spikes_path.exists():
             logger.warning(f"  {ds.name}: missing denoised/spikes, skipping peak figures")
@@ -1846,44 +1845,44 @@ def generate_roi_peak_figures(datasets: List, output_dir: str) -> None:
 
         # ── Load movie ────────────────────────────────────────────────────
         movie = None
-        dims  = None
-        if info_path.exists():
-            with open(info_path) as f:
-                info = json.load(f)
-            movie_path = info.get('config', {}).get('movie') or info.get('movie')
-            if 'dims' in info:
-                dims = tuple(info['dims'])
-            elif 'd1' in info and 'd2' in info:
-                dims = (int(info['d1']), int(info['d2']))
-
-            if movie_path and os.path.exists(movie_path):
-                try:
-                    ext = os.path.splitext(movie_path)[1].lower()
-                    if ext == '.nd2':
-                        import nd2
-                        _m = nd2.imread(movie_path)
-                        movie = (_m[:, 0] if _m.ndim == 4 else _m).astype(np.float32)
-                    elif ext in ('.tif', '.tiff'):
-                        from tifffile import imread as _tifread
-                        movie = _tifread(movie_path).astype(np.float32)
-                    elif ext == '.npy':
-                        movie = np.load(movie_path).astype(np.float32)
-                    else:
-                        raise ValueError(f"unsupported movie format {ext!r}")
-                    # Normalise to (T, H, W) inside this try. A 4-D stack or a
-                    # single 2-D frame otherwise reaches the shape unpacking
-                    # below, which sits outside any handler and would abandon
-                    # every remaining dataset's figures.
-                    if movie.ndim == 4:
-                        movie = movie[:, 0]
-                    elif movie.ndim == 2:
-                        movie = movie[None]
-                    if movie.ndim != 3:
-                        raise ValueError(f"expected a 3-D movie, got {movie.shape}")
-                    logger.info(f"  {ds.name}: loaded movie {movie.shape}")
-                except Exception as me:
-                    logger.warning(f"  {ds.name}: movie unusable ({me}), using projections only")
-                    movie = None
+        try:
+            info = read_run_info(result_path)
+        except RunInfoError as e:
+            logger.warning(f"  {ds.name}: {e}; skipping peak figures")
+            continue
+        dims = info.dims
+        # The activity stage records the movie it read as `source`. This looked
+        # for `config.movie` and `movie`, keys no writer has ever produced, so
+        # the movie was never found and every peak figure rendered without it.
+        movie_path = info.source
+        if movie_path and os.path.exists(movie_path):
+            try:
+                ext = os.path.splitext(movie_path)[1].lower()
+                if ext == '.nd2':
+                    import nd2
+                    _m = nd2.imread(movie_path)
+                    movie = (_m[:, 0] if _m.ndim == 4 else _m).astype(np.float32)
+                elif ext in ('.tif', '.tiff'):
+                    from tifffile import imread as _tifread
+                    movie = _tifread(movie_path).astype(np.float32)
+                elif ext == '.npy':
+                    movie = np.load(movie_path).astype(np.float32)
+                else:
+                    raise ValueError(f"unsupported movie format {ext!r}")
+                # Normalise to (T, H, W) inside this try. A 4-D stack or a
+                # single 2-D frame otherwise reaches the shape unpacking
+                # below, which sits outside any handler and would abandon
+                # every remaining dataset's figures.
+                if movie.ndim == 4:
+                    movie = movie[:, 0]
+                elif movie.ndim == 2:
+                    movie = movie[None]
+                if movie.ndim != 3:
+                    raise ValueError(f"expected a 3-D movie, got {movie.shape}")
+                logger.info(f"  {ds.name}: loaded movie {movie.shape}")
+            except Exception as me:
+                logger.warning(f"  {ds.name}: movie unusable ({me}), using projections only")
+                movie = None
 
         # ── Load spatial footprints + reconcile dims ──────────────────────
         A_sparse = None

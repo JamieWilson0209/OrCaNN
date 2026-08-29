@@ -27,6 +27,7 @@ from scipy.sparse import csc_matrix, save_npz
 
 from orcann.pipeline import inference as infer
 from orcann.pipeline.cli import list_recordings, list_spatial_recordings
+from orcann.run_info import write as write_run_info, read_record, RunInfoError
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,12 @@ def _motion_meta(movie_path):
 
     `motion_correction` writes `<stem>_mc.json` (shift summary) and, when the
     array is available, `<stem>_mc_shifts.npy` (per-frame [dy, dx]) next to
-    `<stem>_mc.tif`. Both are optional: recordings that were already corrected
-    outside this pipeline, or corrected before this metadata was added, simply
-    return `(None, None)` and the analysis then treats motion as clean (its motion
-    QC gates default to zero shift). Returns `(summary_dict_or_None,
-    shifts_array_or_None)`.
+    `<stem>_mc.tif`. Either may be absent — a recording corrected outside this
+    pipeline has neither — and either being absent is carried through rather than
+    filled in: no motion block is written, the analysis stage reads the metrics
+    as NaN, and its motion gates exclude the recording for unknown motion rather
+    than passing it as though it were perfectly still. Returns
+    `(summary_dict_or_None, shifts_array_or_None)`.
     """
     if not movie_path:
         return None, None
@@ -57,10 +59,10 @@ def _motion_meta(movie_path):
     jf = base + ".json"
     if os.path.isfile(jf):
         try:
-            with open(jf) as fh:
-                summary = json.load(fh)
-        except Exception as e:
-            logger.warning(f"  could not read motion summary {jf}: {e}")
+            summary = read_record(jf, expect_stage="motion_correction")
+        except RunInfoError as e:
+            logger.error(f"  motion summary unusable, so this recording will be "
+                         f"excluded for unknown motion: {e}")
     sf = base + "_shifts.npy"
     if os.path.isfile(sf):
         try:
@@ -82,15 +84,7 @@ def _load_spatial(spatial_dir, rec_id):
     return traces, labels, centroids, max_proj
 
 
-BASELINE_METHODS = ("direct", "global_dff")
-_REMOVED_BASELINE_METHODS = {
-    "local_background":
-        "removed in this branch — it was inherited from the calcium pipeline, "
-        "was never callable (it needs the movie and the spatial footprints, and "
-        "the only call site passed the trace matrix), and built its tissue mask "
-        "with Otsu, the classical thresholding OrCaNN's learned segmenter "
-        "replaced. Use global_dff.",
-}
+BASELINE_METHODS = ("global_dff",)
 
 
 def _compute_dff(cfg, traces):
@@ -99,20 +93,10 @@ def _compute_dff(cfg, traces):
     fr = cfg.imaging.frame_rate
     # Validated rather than dispatched with a default branch: an unrecognised
     # value must not quietly select a method and change how dF/F0 is computed.
-    if b.method in _REMOVED_BASELINE_METHODS:
-        raise ValueError(
-            f"baseline.method={b.method!r}: "
-            f"{_REMOVED_BASELINE_METHODS[b.method]}")
     if b.method not in BASELINE_METHODS:
         raise ValueError(
             f"baseline.method={b.method!r} is not recognised. "
             f"Valid values: {', '.join(BASELINE_METHODS)}.")
-    if b.method == "direct":
-        # OASIS receives raw traces; still hand a dF/F0-ish array to the gallery.
-        from orcann.activity.baseline import compute_dff_traces
-        c_dff, c_raw, _ = compute_dff_traces(traces, frame_rate=fr,
-                                             percentile=b.percentile)
-        return c_dff, c_raw
     from orcann.activity.baseline import compute_dff_traces
     c_dff, c_raw, _ = compute_dff_traces(
         traces, frame_rate=fr, percentile=b.percentile,
@@ -158,8 +142,12 @@ def _deconvolve(cfg, c_dff):
         baseline_max_window=cfg.baseline.max_window)
     n_rej = int(res.get("n_traces_rejected") or 0)
     if n_rej:
+        # Not carried per-ROI into the analysis: a trace that cannot be measured
+        # and one with nothing to find are both a detected cell with no findable
+        # activity, and the analysis counts them the same way. The count is the
+        # part worth keeping, because a large one means an upstream problem.
         print(f"  WARNING: {n_rej} ROI(s) rejected for non-finite trace values "
-              f"- see deconv_rejected.npy")
+              f"- see n_traces_rejected in run_info.json")
     return (res.get("C_denoised"), res.get("S"), res.get("noise"),
             res.get("n_spikes_censored"), res.get("trace_rejected"),
             res.get("method"))
@@ -185,10 +173,6 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         np.save(os.path.join(data, "deconv_noise.npy"), np.asarray(noise, np.float32))
     if censored is not None:
         np.save(os.path.join(data, "deconv_censored.npy"), np.asarray(censored, np.int32))
-    if rejected is not None:
-        # Which ROIs were never deconvolved. Their zero spike counts are absent
-        # measurements, not silent cells, and the analysis must not pool them.
-        np.save(os.path.join(data, "deconv_rejected.npy"), np.asarray(rejected, bool))
     if max_proj is not None:
         np.save(os.path.join(data, "max_projection.npy"), max_proj.astype(np.float32))
     np.save(os.path.join(data, "mean_projection.npy"), mean_proj.astype(np.float32))
@@ -201,17 +185,13 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         np.save(os.path.join(data, "motion_shifts.npy"),
                 np.asarray(motion_shifts, np.float32))
 
-    run_info = {
+    payload = {
         "recording_id": rec_id,
-        "stage": "activity (baseline + deconvolution)",
         "frame_rate": float(cfg.imaging.frame_rate),
         "indicator": cfg.imaging.indicator,
-        # The AR seed, not a measured transient decay. Written under both names;
-        # decay_time_s is the spelling older readers expect.
+        # The AR seed, not a measured transient decay.
         "decay_initialisation_s": cfg.decay_initialisation(),
-        "decay_time_s": cfg.decay_initialisation(),
         "dims": [int(H), int(W)],
-        "d1": int(H), "d2": int(W),
         "n_roi": int(c_dff.shape[0]),
         "n_frames": int(c_dff.shape[1]),
         "baseline": {"method": cfg.baseline.method, "percentile": cfg.baseline.percentile},
@@ -229,11 +209,10 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         "source": os.path.abspath(source) if source else None,
     }
     if motion:
-        run_info["motion_correction"] = motion
+        payload["motion_correction"] = motion
     if global_intensity is not None:
-        run_info["global_intensity"] = global_intensity
-    with open(os.path.join(out_dir, "run_info.json"), "w") as fh:
-        json.dump(run_info, fh, indent=2)
+        payload["global_intensity"] = global_intensity
+    write_run_info(out_dir, payload)
 
 
 def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,

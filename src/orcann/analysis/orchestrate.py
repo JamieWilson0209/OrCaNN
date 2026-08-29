@@ -26,6 +26,7 @@ if 'MPLCONFIGDIR' not in os.environ:
 import numpy as np
 
 from ..stage_report import StageReport
+from ..run_info import dump as dump_json
 from .loading import (
     DatasetMetrics, FEATURE_NAMES,
     load_dataset_metrics, _extract_genotype, _extract_organoid_id,
@@ -50,10 +51,13 @@ from ..figures.overview import (
 logger = logging.getLogger(__name__)
 
 
+
+
+
 def run_analysis(
     results_dir: str,
     output_dir: str,
-    frame_rate_override: Optional[float] = None,
+    frame_rate: float,
     motion_max_threshold: float = 15.0,
     motion_residual_threshold: float = 2.0,
     drift_threshold: float = 1.0,
@@ -114,7 +118,7 @@ def run_analysis(
             continue
         ds = load_dataset_metrics(
             str(subdir), subdir.name,
-            frame_rate_override=frame_rate_override,
+            frame_rate=frame_rate,
             min_roi_distance=min_roi_distance,
         )
         if ds is not None:
@@ -167,9 +171,15 @@ def run_analysis(
     excluded = []
     for ds in all_datasets:
         reasons = []
-        if ds.motion_max_shift > motion_max_threshold:
+        # Unknown motion is not clean motion: a recording with no metadata
+        # cannot be shown to meet the threshold, so it does not pass it.
+        if not np.isfinite(ds.motion_max_shift):
+            reasons.append("max_shift unknown (no motion_correction metadata)")
+        elif ds.motion_max_shift > motion_max_threshold:
             reasons.append(f"max_shift={ds.motion_max_shift:.1f}px")
-        if ds.motion_residual_std > motion_residual_threshold:
+        if not np.isfinite(ds.motion_residual_std):
+            reasons.append("residual_std unknown (no motion_shifts.npy)")
+        elif ds.motion_residual_std > motion_residual_threshold:
             reasons.append(f"residual_std={ds.motion_residual_std:.2f}px")
         if ds.baseline_drift > drift_threshold:
             reasons.append(f"baseline_drift={ds.baseline_drift:.2f}")
@@ -229,7 +239,7 @@ def run_analysis(
     
     # Save quality gating JSON to data/
     with open(os.path.join(data_dir, 'quality_gating.json'), 'w') as f:
-        json.dump(quality_report, f, indent=2)
+        dump_json(quality_report, f)
 
     # ── Generate motion quality figure ───────────────────────────────────
     fig_quality_gating(all_datasets, motion_max_threshold,
@@ -337,58 +347,6 @@ def run_analysis(
 
     json_path = os.path.join(data_dir, 'analysis_results.json')
 
-    # ── Cohort consistency check ─────────────────────────────────────────
-    # Spike amplitudes are only comparable across recordings measured the same
-    # way. A recording whose pipeline_results.json was missing or unreadable
-    # falls back to the default method, which would otherwise pool two
-    # definitions of amplitude into one comparison without any trace.
-    _methods = {}
-    for d in datasets:
-        _methods.setdefault(getattr(d, 'amplitude_method', '') or 'unknown',
-                            []).append(d.name)
-    _fellback = [d.name for d in datasets
-                 if getattr(d, 'amplitude_method_resolved', '') == 'fallback']
-    results['amplitude_method'] = {
-        'by_method': _methods,
-        'consistent': len(_methods) <= 1,
-        'fell_back': _fellback,
-    }
-    if len(_methods) > 1:
-        logger.error(
-            "Spike amplitudes are NOT comparable across this cohort: "
-            + "; ".join(f"{m} ({len(v)} recording(s))" for m, v in _methods.items())
-            + ". Any amplitude comparison below pools two different measurements.")
-    elif _fellback:
-        logger.warning(
-            f"{len(_fellback)} recording(s) fell back to the default "
-            f"amplitude method: {', '.join(_fellback)}")
-
-    # The detector matters more than the amplitude method: oasis and robust
-    # differ in event counts and amplitude scale, so pooling recordings across
-    # them is not valid. Since 10df777 there is no fallback that could switch
-    # method silently, but a cohort can still mix them if the config changed
-    # partway through a study, and that is what this catches.
-    _detectors = {}
-    for d in datasets:
-        _detectors.setdefault(getattr(d, 'deconv_method', '') or 'unknown',
-                              []).append(d.name)
-    results['deconv_method'] = {
-        'by_method': _detectors,
-        'consistent': len(_detectors) <= 1,
-    }
-    if len(_detectors) > 1:
-        logger.error(
-            "Spike counts and amplitudes are NOT comparable across this cohort: "
-            + "; ".join(f"{m} ({len(v)} recording(s))" for m, v in _detectors.items())
-            + ". The detectors differ, so event counts and amplitude scales differ."
-        )
-        for m, names in sorted(_detectors.items()):
-            logger.error(f"    {m}: {', '.join(sorted(names))}")
-    elif 'unknown' in _detectors and len(datasets) > 1:
-        logger.warning(
-            "No detector recorded for any recording — these predate method_used "
-            "being written, so a silent OASIS fallback cannot be ruled out.")
-
     # ── Analysis stages ──────────────────────────────────────────────────
     # Each stage is isolated so one failure cannot cost the run the others, but
     # every outcome is recorded: the report is written into the results JSON and
@@ -427,7 +385,7 @@ def run_analysis(
             return run_transient_decay(
                 datasets, output_dir, deconv_method=deconv_method,
                 k_onset=robust_k_onset,
-                frame_rate=frame_rate_override or 2.0,
+                frame_rate=frame_rate,
                 mutant_label=mutant_label)
         dev_results = report.run("dev_transient_decay", _run_dev)
         if dev_results is not None:
@@ -450,7 +408,7 @@ def run_analysis(
     # still tell which sections are missing because they failed.
     results['stage_report'] = report.to_dict()
     with open(json_path, 'w') as f:
-        json.dump(results, f, indent=2, default=str)
+        dump_json(results, f)
     logger.info(f"Wrote {json_path}")
     report.log_summary()
 
