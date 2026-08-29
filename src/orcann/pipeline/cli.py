@@ -19,6 +19,7 @@ import glob
 import os
 
 from orcann.configLoader import Config
+from orcann.logging_setup import LEVELS, DEFAULT_LEVEL, configure as configure_logging
 
 _EXTS = ("*.nd2", "*.tif", "*.tiff", "*.npy")
 # Sidecars the motion_correction stage writes next to each corrected movie in
@@ -69,6 +70,8 @@ def _common(sp):
     sp.add_argument("--set", dest="overrides", action="append", default=[],
                     metavar="section.key=value",
                     help="one-off override of a config value (repeatable)")
+    sp.add_argument("--log-level", default=DEFAULT_LEVEL, choices=LEVELS,
+                    help="how much the run reports (default: %(default)s)")
     sp.add_argument("--dump-config", metavar="PATH",
                     help="write a commented config to PATH and exit")
 
@@ -130,6 +133,9 @@ def main(argv=None) -> int:
     real exceptions through, and the shell sees a traceback and a non-zero code.
     """
     a = build_parser().parse_args(argv)
+    # Before anything else: a stage that logs its way through a config problem
+    # should be heard doing it.
+    configure_logging(a.log_level)
     cfg = _resolve_config(a)
     if cfg is None:
         return 2

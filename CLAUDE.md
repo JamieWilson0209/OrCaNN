@@ -60,6 +60,20 @@ provenance, not an input.
 **Prefer removal over patching.** A silently broken path is deleted, not guarded.
 Several detectors, baseline methods and quality gates have gone this way.
 
+## Logging
+
+`pipeline/cli.py` calls `logging_setup.configure()` once at startup, and nothing
+else may — a library module that configures logging takes the decision away from
+whoever imported it. Output goes to **stdout**, because the cluster writes stdout
+and stderr to separate files and the stages also `print` their progress; on
+stderr the narrative would be split across two logs. INFO prints bare so the
+messages keep their own indentation, WARNING and above are prefixed so they stand
+out. `--log-level` (DEBUG/INFO/WARNING/ERROR, default INFO) is on every stage.
+
+Log at INFO what a reader would need to explain an unexpected number — what was
+selected, excluded, deduplicated, and why. That is the level that was silently
+discarded before the handler existed.
+
 ## Environment
 
 The `orcann` conda env lacks `pandas` and `sklearn`, so `analysis/stats.py`,
