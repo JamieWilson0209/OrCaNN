@@ -1,7 +1,7 @@
 """Spatial segmenter training: annotated-recording loading, patch sampling,
 IoU metrics, the training loop, and a synthetic source generator.
 
-Mirrors ``orcann.temporal.training``; the model is in ``orcann.spatial.detection.segmenter``.
+The model it fits is in ``orcann.spatial.detection.segmenter``.
 See docs/spatial/training.md.
 """
 from __future__ import annotations

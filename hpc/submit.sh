@@ -19,7 +19,6 @@
 #
 # Not handled here (these are not per-recording, submit them directly):
 #   qsub -v CONFIG=config.yaml hpc/jobs/train_spatial.sh    # trains one model
-#   qsub -v CONFIG=config.yaml hpc/jobs/train_temporal.sh
 # =============================================================================
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

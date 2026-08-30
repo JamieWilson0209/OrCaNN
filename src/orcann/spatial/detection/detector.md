@@ -18,7 +18,7 @@ LoG(x, y; σ) = σ² · ((x² + y² − 2σ²) / σ⁴) · G_σ(x, y)
 
 The leading σ² is the conventional scale-normalisation (Lindeberg 1998). The
 kernel is sign-flipped so a bright blob gives a positive response and demeaned so
-flat background contributes nothing (DC rejection, as in the temporal stage).
+flat background contributes nothing (DC rejection).
 Scales are stored as log-σ and exponentiated, so σ > 0 and the bank is
 differentiable in the scales. A blob of radius r is matched by σ = r/√2. The
 per-scale peak is not equalised across scales, so a single channel is not a clean

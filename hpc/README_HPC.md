@@ -33,7 +33,7 @@ OrCaNN needs **two** conda envs, and which stage runs where is not guessable:
 
 | env | stages |
 |---|---|
-| `ENV_PREFIX` (torch) | `infer`, `segment`, `analysis`, `train_spatial`, `train_temporal` |
+| `ENV_PREFIX` (torch) | `infer`, `segment`, `analysis`, `train_spatial` |
 | `CAIMAN_ENV` | `motion_correction`, `activity` |
 
 `activity` is in the caiman env because OASIS deconvolution *is* CaImAn's

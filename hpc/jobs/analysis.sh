@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Group analysis over the transient outputs: within-recording frequency and
+# Group analysis over the activity outputs: within-recording frequency and
 # timescale distributions, genotype comparison, and longitudinal-by-day trends.
 # A single aggregate job (not a per-recording array); reads results/activity
 # and writes results/analysis. CPU work. Submit AFTER activity has run

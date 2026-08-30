@@ -307,7 +307,7 @@ fi
 # nothing about it looks like motion correction.
 echo
 echo "=== environments ==="
-for spec in "main:${ENV_PREFIX}:infer, segment, analysis, train_spatial, train_temporal" \
+for spec in "main:${ENV_PREFIX}:infer, segment, analysis, train_spatial" \
             "caiman:${CAIMAN_ENV}:motion_correction, activity"; do
     name="${spec%%:*}"; rest="${spec#*:}"
     prefix="${rest%%:*}"; stages="${rest#*:}"
