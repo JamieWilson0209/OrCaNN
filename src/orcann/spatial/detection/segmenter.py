@@ -74,10 +74,32 @@ class SpatialSegmenter(nn.Module):
         self.dec = _block(2 * h, h)
         self.out = nn.Conv2d(h, 1, 1)
 
+    def _feature_rms(self, feats: torch.Tensor) -> torch.Tensor:
+        """Per-channel RMS over the pixels the ∇²G bank could read whole.
+
+        Within ``_half`` px of the frame edge the convolution reads zero padding
+        instead of tissue, and a demeaned kernel answers that step about as
+        strongly as it answers a soma. Drawing the divisor from the whole frame
+        therefore scales it with the recording's baseline brightness and with
+        its frame size, neither of which is a property of the signal: the same
+        cell would reach the encoder weaker in a brighter recording. The border
+        is excluded rather than extrapolated, as ``motion_correction`` crops the
+        band its shifts moved on and off the frame.
+        """
+        m = self.front.log._half
+        H, W = feats.shape[-2:]
+        if H <= 2 * m or W <= 2 * m:
+            raise ValueError(
+                f"frame is {H}x{W}, which leaves no interior once the {m}px "
+                f"border the ∇²G bank cannot read is excluded; train_spatial.patch "
+                f"and every recording must exceed {2 * m}px")
+        interior = feats[..., m:H - m, m:W - m]
+        return interior.pow(2).mean(dim=(-2, -1), keepdim=True).sqrt()
+
     def forward(self, movie: torch.Tensor) -> torch.Tensor:
         """(B, T, H, W) -> (B, 1, H, W) soma logits."""
         feats = self.front.energy(movie)
-        rms = feats.pow(2).mean(dim=(-2, -1), keepdim=True).sqrt()
+        rms = self._feature_rms(feats)
         feats = feats / (rms + 1e-6)
         e1 = self.enc1(feats)
         e2 = self.enc2(self.pool(e1))
