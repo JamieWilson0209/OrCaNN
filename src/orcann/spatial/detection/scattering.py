@@ -28,7 +28,7 @@ class SpatialScatterDetector(nn.Module):
         use_variance: bool = True,
         use_correlation: bool = False,
         max_substrate: str = "percentile",
-        max_q: float = 0.99,
+        max_k: int = 3,
         corr_radius: int = 2,
         corr_dirs: int = 8,
     ) -> None:
@@ -37,7 +37,7 @@ class SpatialScatterDetector(nn.Module):
                        "learnable_scales": learnable_scales, "n_energy_frames": n_energy_frames,
                        "use_structural": use_structural, "use_max": use_max,
                        "use_variance": use_variance, "use_correlation": use_correlation,
-                       "max_substrate": max_substrate, "max_q": max_q,
+                       "max_substrate": max_substrate, "max_k": max_k,
                        "corr_radius": corr_radius, "corr_dirs": corr_dirs}
         self.log = ParametricLoG2d(radii_px, learnable_scales=learnable_scales)
         self.use_structural = use_structural
@@ -45,7 +45,7 @@ class SpatialScatterDetector(nn.Module):
         self.use_variance = use_variance
         self.use_correlation = use_correlation
         self.max_substrate = max_substrate
-        self.max_q = max_q
+        self.max_k = max_k
         self._offsets = self._make_offsets(corr_radius, corr_dirs) if use_correlation else []
         n_groups = use_structural + use_max + use_variance + use_correlation
         assert n_groups >= 1, "enable at least one channel"
@@ -101,9 +101,15 @@ class SpatialScatterDetector(nn.Module):
         if self.use_structural:
             chans.append(mean)
         if self.use_max:
-            # robust max projection (top-k ≈ (1-q) percentile) then the same ∇²G bank
+            # The k-th brightest frame per pixel, then the same ∇²G bank. A fixed
+            # count, not a fraction of T: a fraction sets a duty-cycle floor, so a
+            # cell firing in fewer than that share of frames reads as background
+            # however many frames were pooled. Three discards the one- and
+            # two-frame events a cosmic ray or a hot pixel produces, and keeps any
+            # transient long enough to be sampled three times; a cell caught in
+            # fewer still reaches the encoder through the variance channel.
             if self.max_substrate == "percentile":
-                k = max(1, int(round((1.0 - self.max_q) * T)))
+                k = min(self.max_k, T)
                 proj = movie.topk(k, dim=1).values[:, -1]               # (B, H, W)
             else:
                 proj = movie.max(dim=1).values
