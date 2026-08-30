@@ -28,7 +28,7 @@ class SpatialScatterDetector(nn.Module):
         use_variance: bool = True,
         use_correlation: bool = False,
         max_substrate: str = "percentile",
-        max_k: int = 3,
+        max_k: int = 2,
         corr_radius: int = 2,
         corr_dirs: int = 8,
     ) -> None:
@@ -104,10 +104,11 @@ class SpatialScatterDetector(nn.Module):
             # The k-th brightest frame per pixel, then the same ∇²G bank. A fixed
             # count, not a fraction of T: a fraction sets a duty-cycle floor, so a
             # cell firing in fewer than that share of frames reads as background
-            # however many frames were pooled. Three discards the one- and
-            # two-frame events a cosmic ray or a hot pixel produces, and keeps any
-            # transient long enough to be sampled three times; a cell caught in
-            # fewer still reaches the encoder through the variance channel.
+            # however many frames were pooled. Two discards the single-frame
+            # events a cosmic ray or a hot pixel produces while asking the least
+            # of a real cell -- at 64 sampled frames it needs two of them, where
+            # three would need roughly three separate transients. A cell caught in
+            # one still reaches the encoder through the variance channel.
             if self.max_substrate == "percentile":
                 k = min(self.max_k, T)
                 proj = movie.topk(k, dim=1).values[:, -1]               # (B, H, W)
