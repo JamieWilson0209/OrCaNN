@@ -15,7 +15,8 @@ from orcann.spatial.detection.laplacian import ParametricLoG2d
 class SpatialScatterDetector(nn.Module):
     """Per-frame learnable ∇²G energy front-end (no detection head); the segmenter
     consumes :meth:`energy` and adds its own U-Net. ``n_energy_frames`` subsamples
-    long movies to bound compute."""
+    long movies to bound compute: at random while training, on an even stride in
+    ``eval()``, so a cached probability map is reproducible."""
 
     def __init__(
         self,
@@ -64,7 +65,19 @@ class SpatialScatterDetector(nn.Module):
         materialised. See docs/spatial/detector.md."""
         B, T, H, W = movie.shape
         if self.n_energy_frames and T > self.n_energy_frames:
-            idx = torch.randperm(T, device=movie.device)[:self.n_energy_frames]
+            if self.training:
+                # A fresh subset per patch per epoch, so the fit is not tied to
+                # one realisation of the frames it happened to be shown.
+                idx = torch.randperm(T, device=movie.device)[:self.n_energy_frames]
+            else:
+                # An even stride, because `infer` caches this map and `segment`
+                # re-reads it while tuning: two runs of one recording that
+                # disagree cannot be reconciled, and nothing records which
+                # frames produced either. Every pooled statistic below is
+                # order-invariant, so a sorted subset is equivalent to a shuffled
+                # one of the same size.
+                idx = torch.linspace(0, T - 1, self.n_energy_frames,
+                                     device=movie.device).round().long()
             movie = movie[:, idx]
             T = movie.shape[1]
 
