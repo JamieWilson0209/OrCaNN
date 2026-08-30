@@ -80,17 +80,6 @@ def recording_id(path: str) -> str:
 
 # SPATIAL — movie -> probability -> labels -> traces
 
-def nd2_um_per_px(path: str) -> Optional[float]:
-    """Microns/pixel from ND2 (xy) metadata, or None if unavailable."""
-    try:
-        import nd2
-        with nd2.ND2File(path) as f:
-            vs = f.voxel_size()                        # (x, y, z) microns
-        return float(vs.x)
-    except Exception:
-        return None
-
-
 def resample_for_model(model, movie: np.ndarray, in_um: Optional[float] = None,
                        resize_to: int = 0, train_um_override: Optional[float] = None
                        ) -> np.ndarray:
@@ -258,14 +247,48 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
     ``(prob, max_projection, n_frames)`` at the model's working resolution. No
     threshold, no extraction — the result is cached so tuning never re-runs this.
     """
-    from orcann.pipeline.extraction import _load_movie
+    import torch
+
+    from orcann.pipeline.extraction import open_recording
     from orcann.spatial.detection.segmenter import predict_prob
-    movie = _load_movie(movie_path)
-    in_um = nd2_um_per_px(movie_path) if movie_path.endswith(".nd2") else None
-    movie = resample_for_model(spatial_model, movie, in_um=in_um,
-                               resize_to=resize_to, train_um_override=train_um_override)
-    prob = predict_prob(spatial_model, movie).astype(np.float32)
-    return prob, movie.max(axis=0).astype(np.float32), int(movie.shape[0])
+
+    with open_recording(movie_path) as rec:
+        n_frames = rec.meta.n_frames
+        # The recording already told us its pixel size when it was opened; reading it
+        # here rather than re-opening the file is the only change to what
+        # resample_for_model is given. The .nd2 restriction is kept deliberately: a
+        # declared TIFF now carries a micron size too, and passing it would arm the
+        # physical-scale branch the moment a checkpoint records a training scale.
+        # That switch is a decision, not a side effect -- see dev/segment-stage-review.md.
+        in_um = rec.meta.um_per_px if movie_path.endswith(".nd2") else None
+
+        # Only the frames the energy front-end will actually pool. It subsamples on an
+        # even stride when handed more than n_energy_frames, so selecting the same
+        # frames here and handing it exactly those leaves the result unchanged while
+        # keeping the rest of the movie off the device.
+        n_pool = getattr(spatial_model.front, "n_energy_frames", None)
+        if n_pool and n_frames > n_pool:
+            idx = torch.linspace(0, n_frames - 1, n_pool).round().long().tolist()
+        else:
+            idx = list(range(n_frames))
+        pooled = resample_for_model(
+            spatial_model, rec.frames(idx, require_finite=True), in_um=in_um,
+            resize_to=resize_to, train_um_override=train_um_override)
+        prob = predict_prob(spatial_model, pooled).astype(np.float32)
+
+        # The projection is over every frame, so it is streamed rather than
+        # materialised: max is associative, and the spatial resample is applied per
+        # block, which is identical to resampling the whole movie because the time
+        # factor is exactly 1.
+        maxproj = None
+        for block in rec.stream(32, require_finite=True):
+            block = resample_for_model(spatial_model, block, in_um=in_um,
+                                       resize_to=resize_to,
+                                       train_um_override=train_um_override)
+            block_max = block.max(axis=0)
+            maxproj = block_max if maxproj is None else np.maximum(maxproj, block_max)
+
+    return prob, maxproj.astype(np.float32), int(n_frames)
 
 
 def resample_to_shape(movie: np.ndarray, hw) -> np.ndarray:
