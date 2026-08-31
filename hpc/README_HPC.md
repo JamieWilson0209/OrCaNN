@@ -228,18 +228,6 @@ qsub -t 1-N -v CONFIG=config.yaml,SWEEP='threshold=0.5:0.6:0.7;min_radius=0:2' h
 
 Then set the winning values in `config.yaml` and run `segment` normally.
 
-**Curation without a GUI.** Read the bad ROI numbers off `results/spatial/<rec>/
-figures/overlay.png` and drop them with a per-recording
-`results/spatial/<rec>/curate.json`:
-
-```json
-{"exclude_rois": [5, 37, 112], "exclude_boxes": [[0, 0, 40, 512]]}
-```
-
-`segment` applies it as a post-extraction subset (ids are the overlay numbers;
-boxes are `[r0, c0, r1, c1]` in the overlay's resolution and drop any ROI whose
-centroid is inside). Re-run `segment --force` for that recording to apply.
-
 **Staged, restartable.** Each stage skips recordings whose output already exists,
 so a partially-failed array can be resubmitted and only the missing recordings
 are redone. Tuning lives in `config.yaml` — edit it rather than passing per-job

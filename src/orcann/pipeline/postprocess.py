@@ -1,13 +1,13 @@
 """Probability-map post-processing: turn a soma-probability map into instances.
 
 The parameter-dependent, model-free half of spatial detection: thresholding the
-cached probability map into instance labels, size-filtering, and (post-extraction)
-dropping curated ROIs by id or box. Connected components need only numpy + scipy;
-the watershed path lazily imports the torch-backed detection operators, so it
-costs nothing unless ``watershed=True`` is requested.
+cached probability map into instance labels and size-filtering them. Connected
+components need only numpy + scipy; the watershed path lazily imports the
+torch-backed detection operators, so it costs nothing unless ``watershed=True``
+is requested.
 
 The ``segment`` stage (pipeline.run_segment) calls ``labels_from_prob`` here on
-the cached probability map, so thresholding and curation live in one place.
+the cached probability map.
 """
 from __future__ import annotations
 
@@ -56,34 +56,3 @@ def labels_from_prob(prob: np.ndarray, threshold: float = 0.5,
     if area > 0:
         labels = drop_small_labels(labels, area)
     return labels.astype(np.int32)
-
-
-def subset_rois(labels, centroids, traces, exclude_rois=None, exclude_boxes=None):
-    """Drop curated ROIs and relabel; returns ``(labels, centroids, traces)``.
-
-    Curation is a post-extraction subset (no re-segmentation): ``exclude_rois`` is
-    a list of 1-based label ids (row i of traces is label i+1 is centroid i);
-    ``exclude_boxes`` is a list of ``[r0, c0, r1, c1]``
-    pixel boxes (in the working/overlay resolution) and drops any ROI whose
-    centroid lies inside. The label image is relabelled contiguous 1..K so the
-    kept axis stays consistent across labels / centroids / traces.
-    """
-    n = int(traces.shape[0])
-    keep = np.ones(n, bool)
-    for r in (exclude_rois or []):
-        if 1 <= int(r) <= n:
-            keep[int(r) - 1] = False
-    cen = np.asarray(centroids, np.float32).reshape(-1, 2)
-    for box in (exclude_boxes or []):
-        r0, c0, r1, c1 = box
-        rlo, rhi = sorted((r0, r1)); clo, chi = sorted((c0, c1))
-        inside = ((cen[:, 0] >= rlo) & (cen[:, 0] <= rhi) &
-                  (cen[:, 1] >= clo) & (cen[:, 1] <= chi))
-        keep[inside] = False
-    if keep.all():
-        return labels, cen, traces
-
-    old_ids = np.nonzero(keep)[0] + 1                    # kept labels (1-based)
-    remap = np.zeros(int(labels.max()) + 1, np.int32)
-    remap[old_ids] = np.arange(1, len(old_ids) + 1, dtype=np.int32)
-    return remap[labels].astype(np.int32), cen[keep], traces[keep]

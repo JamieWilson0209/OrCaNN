@@ -143,8 +143,7 @@ def write_recording(out_root: str, rec_id: str, *,
                     centroids: Optional[np.ndarray] = None,
                     max_projection: Optional[np.ndarray] = None,
                     prob: Optional[np.ndarray] = None,
-                    source: Optional[str] = None,
-                    extra_meta: Optional[Dict] = None) -> str:
+                    source: Optional[str] = None) -> str:
     """Write ``<out_root>/<rec_id>/data/`` to the contract and return the dir.
 
     Spatial arrays (``labels``, ``centroids``, ``max_projection``, ``prob``) are
@@ -186,8 +185,6 @@ def write_recording(out_root: str, rec_id: str, *,
         },
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
-    if extra_meta:
-        meta.update(extra_meta)
     write_record(os.path.join(data, META_JSON), stage, meta)
     return out
 

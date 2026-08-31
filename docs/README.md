@@ -149,7 +149,7 @@ in the caiman env as above.
 
 ---
 
-## 5. Tune segmentation and curate (optional, between infer and segment)
+## 5. Tune segmentation (optional, between infer and segment)
 
 Because `infer` cached the prob map, tuning never touches the GPU. To choose the
 threshold / min_radius, **preview a grid** before extracting (writes
@@ -162,16 +162,6 @@ qsub -t 1-N -v CONFIG=config.yaml,SWEEP='threshold=0.5:0.6:0.7;min_radius=0:2' h
 Values are colon-separated because `qsub -v` splits on commas. Pull the montages,
 set the winning values in `config.yaml` (`spatial.threshold`, `spatial.min_radius`),
 then run the real `segment`.
-
-**Curate without a GUI.** Read the bad ROI numbers off
-`results/spatial/<rec>/figures/overlay.png` and drop them with a per-recording
-`results/spatial/<rec>/curate.json`:
-
-```json
-{"exclude_rois": [5, 37, 112], "exclude_boxes": [[0, 0, 40, 512]]}
-```
-
-Re-run `segment --force` for that recording, then run `activity`.
 
 ---
 
