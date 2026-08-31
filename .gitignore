@@ -88,3 +88,10 @@ desktop.ini
 *.swp
 *.swo
 *~
+
+# --- Agent instructions (local, not part of the project) ---
+# CLAUDE.md tells a coding agent how to work in this checkout: conventions,
+# which conda env imports what, how reviews are run. It describes a way of
+# working rather than the pipeline itself, so it stays on the machine of
+# whoever uses an agent and out of the shared history.
+CLAUDE.md
