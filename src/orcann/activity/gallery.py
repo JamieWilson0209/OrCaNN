@@ -168,7 +168,9 @@ def generate_roi_diagnostic_data(
             circularity = seeds.contours[i].circularity
         
         roi_info = {
-            'id': i,
+            # 1-based, so a number shown here is the label id in labels.npy and
+            # the row i-1 of traces.npy; the arrays are the reference, not this view.
+            'id': i + 1,
             'center': [float(y), float(x)],
             'radius': float(r),
             'intensity': float(seeds.intensities[i]),
