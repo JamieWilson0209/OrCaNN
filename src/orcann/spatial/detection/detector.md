@@ -58,11 +58,9 @@ Consumes `energy()` as its feature front-end and adds a small U-Net that maps th
 moment stack to per-pixel soma-probability logits. Trained with a focal + soft
 Dice loss, which is invariant to the foreground fraction (the focal term
 down-weights the easy background so sparse frames still learn, where plain BCE
-would not). `predict_prob` runs the model to a probability map; `segment_instances`
-thresholds it and runs a centroid-seeded watershed so touching cells split into
-one basin per annotated soma rather than merging under connected components.
-`extract_instances` (in `laplacian.py`) is the lighter peak-local-max read-out of
-centroids from a cellness map.
+would not). `predict_prob` runs the model to a probability map; the `segment`
+stage reduces that to instances with connected components, so cells whose
+footprints touch merge into one label.
 
 ## Choices and limits
 

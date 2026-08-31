@@ -2,9 +2,7 @@
 
 The parameter-dependent, model-free half of spatial detection: thresholding the
 cached probability map into instance labels and size-filtering them. Connected
-components need only numpy + scipy; the watershed path lazily imports the
-torch-backed detection operators, so it costs nothing unless ``watershed=True``
-is requested.
+components need only numpy + scipy.
 
 The ``segment`` stage (pipeline.run_segment) calls ``labels_from_prob`` here on
 the cached probability map.
@@ -29,26 +27,16 @@ def drop_small_labels(labels: np.ndarray, min_area: int) -> np.ndarray:
 
 
 def labels_from_prob(prob: np.ndarray, threshold: float = 0.5,
-                     watershed: bool = False, min_distance: int = 4,
                      min_area: int = 4, min_radius: float = 0.0) -> np.ndarray:
     """Reduce a soma-probability map to an instance label image.
 
-    Connected components by default (touching cells merge); ``watershed`` splits
-    them with peak-seeded basins (this branch needs torch). Regions below
-    ``min_area`` px (or the area implied by ``min_radius``, pi*r^2) are dropped,
-    then labels are relabelled contiguous 1..N.
+    Connected components, so cells whose footprints touch merge into one label.
+    Regions below ``min_area`` px (or the area implied by ``min_radius``,
+    pi*r^2) are dropped, then labels are relabelled contiguous 1..N.
     """
     from scipy.ndimage import label as cc_label
 
-    if watershed:
-        # torch-backed helpers, imported only when watershed is requested
-        from orcann.spatial.detection.laplacian import extract_instances
-        from orcann.spatial.detection.segmenter import segment_instances
-        seeds, _ = extract_instances(prob, min_distance=min_distance,
-                                     threshold=threshold)
-        labels = segment_instances(prob, seeds, threshold=threshold)
-    else:
-        labels = cc_label(prob >= threshold)[0].astype(np.int32)
+    labels = cc_label(prob >= threshold)[0].astype(np.int32)
 
     area = min_area
     if min_radius > 0:

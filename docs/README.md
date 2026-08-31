@@ -95,7 +95,7 @@ orcann segment --dump-config config.yaml
 ```
 
 The sections you will touch most: `imaging` (frame rate and indicator, which sets
-the OASIS decay time), `spatial` (threshold, watershed) for detection tuning,
+the OASIS decay time), `spatial` (threshold, min_radius) for detection tuning,
 `baseline` / `deconvolution` for the activity stage, and `analysis` for the group
 comparison thresholds.
 

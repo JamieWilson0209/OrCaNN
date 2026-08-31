@@ -3,8 +3,8 @@
 per-recording INSTANCE LABEL images for segmentation training.
 
 Each output is an (H, W) int32 label image: 0 = background, k = the k-th ROI.
-Foreground mask is simply (label > 0); instance id is preserved so touching
-cells can be separated later (e.g. seeded watershed from the centroid list).
+Training binarises it to (label > 0); the instance ids are kept because they are
+what `_load_annotation` reads centroids and radii from.
 
 ImageJ stores x=col, y=row; that mapping is applied explicitly. ROIs were
 traced on the downscaled projection (~512 frame). If your movies are at a
@@ -109,7 +109,7 @@ def main():
             plt.tight_layout(); plt.savefig(os.path.join(a.check, out_stem + "_mask.png"), dpi=100)
             plt.close(fig)
 
-    print(f"\ninstance labels -> {a.out}  (foreground = label>0; ids preserved for watershed)")
+    print(f"\ninstance labels -> {a.out}  (foreground = label>0; ids identify each ROI)")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import numpy as np
 
 from orcann.spatial import (
     train_segmenter, load_seg_recording, synthetic_sources,
-    predict_prob, segment_instances, best_iou, SegRecording)
+    predict_prob, best_iou, SegRecording)
 from orcann.pipeline.model_io import save_model
 from orcann.run_info import write_record
 
@@ -83,9 +83,8 @@ def run(cfg, synthetic=False):
             prob = predict_prob(model, rec.movie)
             iou, thr = best_iou(prob, (rec.label > 0))
             ious.append(iou)
-            inst = segment_instances(prob, rec.centroids, threshold=thr)
-            print(f"  {rec.rid:28s} IoU {iou:.3f} @thr {thr:.2f}  instances pred/true "
-                  f"{int(inst.max())}/{len(rec.centroids)}")
+            print(f"  {rec.rid:28s} IoU {iou:.3f} @thr {thr:.2f}  "
+                  f"{len(rec.centroids)} annotated cells")
         metrics["val_iou_mean"] = float(np.mean(ious))
         print("held-out mean IoU (best threshold):", round(metrics["val_iou_mean"], 3))
     else:

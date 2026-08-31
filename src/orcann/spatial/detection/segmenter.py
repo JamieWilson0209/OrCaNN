@@ -129,20 +129,3 @@ def predict_prob(model: SpatialSegmenter, movie: np.ndarray,
     model.eval()
     x = torch.from_numpy(movie.astype(np.float32)).to(device)[None]
     return torch.sigmoid(model(x))[0, 0].cpu().numpy()
-
-
-def segment_instances(prob: np.ndarray, centroids: np.ndarray,
-                      threshold: float = 0.5) -> np.ndarray:
-    """Threshold then centroid-seeded watershed -> instance labels (so touching
-    cells split into one basin each). See docs/spatial/detector.md."""
-    from scipy import ndimage as ndi
-    from skimage.segmentation import watershed
-    fg = prob >= threshold
-    markers = np.zeros(prob.shape, np.int32)
-    for i, (cy, cx) in enumerate(centroids, 1):
-        yy, xx = int(round(cy)), int(round(cx))
-        if 0 <= yy < prob.shape[0] and 0 <= xx < prob.shape[1]:
-            markers[yy, xx] = i
-    if markers.max() == 0:
-        return ndi.label(fg)[0]
-    return watershed(-prob, markers, mask=fg)

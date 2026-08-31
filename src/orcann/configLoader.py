@@ -55,8 +55,6 @@ class Imaging:
 @dataclass
 class SpatialParams:
     threshold: float = 0.5
-    watershed: bool = False
-    min_distance: int = 4
     min_area: int = 4
     min_radius: float = 0.0
     resize_to: int = 0
@@ -364,8 +362,6 @@ _FIELD_DOC = {
     "imaging.frame_rate": "recording frame rate in Hz",
     "imaging.indicator": "calcium indicator; resolves the AR seed when deconvolution.decay_initialisation is null",
     "spatial.threshold": "soma-probability cut, ~0.5-0.6",
-    "spatial.watershed": "split touching cells (false = connected components, which merge them)",
-    "spatial.min_distance": "min peak separation in px for watershed seeding",
     "spatial.min_area": "drop detected regions smaller than this many px (0 disables)",
     "spatial.min_radius": "or drop regions below this equivalent radius in px",
     "spatial.resize_to": "force each frame to NxN when pixel size is unknown (0 = off)",

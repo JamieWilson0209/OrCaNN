@@ -76,22 +76,3 @@ def centroids_from_masks(masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         cents.append((ys.mean(), xs.mean()))
         radii.append(math.sqrt(len(ys) / math.pi))
     return np.asarray(cents, dtype=np.float32), np.asarray(radii, dtype=np.float32)
-
-
-# INFERENCE — cellness map -> instances
-
-def extract_instances(
-    cellness: np.ndarray,
-    min_distance: int = 6,
-    threshold: float = 0.5,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Peak-local-max on the cellness map -> (centroids, peak scores)."""
-    from scipy.ndimage import maximum_filter
-
-    m = cellness >= threshold
-    mx = maximum_filter(cellness, size=2 * min_distance + 1)
-    peaks = m & (cellness == mx)
-    ys, xs = np.where(peaks)
-    cents = np.stack([ys, xs], axis=1).astype(np.float32)
-    scores = cellness[ys, xs]
-    return cents, scores

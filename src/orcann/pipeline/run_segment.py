@@ -1,7 +1,7 @@
 """Segment stage (CPU): results/infer (cached prob) + movie -> results/spatial.
 
 The parameter-dependent half of spatial detection, and model-free: it reads the
-cached probability map, applies threshold / min_radius / watershed, extracts a
+cached probability map, applies threshold / min_radius, extracts a
 trace per ROI from the movie, and writes the canonical results/spatial/<rec>/
 folder. No GPU, no model forward pass — so re-tuning is a cheap CPU job.
 
@@ -81,8 +81,8 @@ def run(cfg, task_id=None, force=False, sweeps=None):
 
     os.makedirs(out, exist_ok=True)
     models = {"spatial": os.path.abspath(cfg.models.spatial) if cfg.models.spatial else None}
-    base = dict(threshold=sp.threshold, watershed=sp.watershed,
-                min_distance=sp.min_distance, min_area=sp.min_area, min_radius=sp.min_radius)
+    base = dict(threshold=sp.threshold, min_area=sp.min_area,
+                min_radius=sp.min_radius)
     print(f"segment: {len(recs)} recording(s)  {inf} + {pre} -> {out}")
     for rec_id in recs:
         if os.path.exists(os.path.join(out, rec_id, "data", "traces.npy")) and not force:
@@ -120,8 +120,8 @@ def _run_sweep(cfg, recs, sweeps):
 
     sp, inf, out = cfg.spatial, cfg.paths.infer, cfg.paths.spatial
     grid = _expand_sweeps(sweeps)
-    base = dict(threshold=sp.threshold, watershed=sp.watershed,
-                min_distance=sp.min_distance, min_area=sp.min_area, min_radius=sp.min_radius)
+    base = dict(threshold=sp.threshold, min_area=sp.min_area,
+                min_radius=sp.min_radius)
     keys = list(grid[0].keys())
     ncol = min(4, len(grid))
     nrow = (len(grid) + ncol - 1) // ncol

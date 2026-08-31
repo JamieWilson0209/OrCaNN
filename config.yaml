@@ -25,8 +25,6 @@ imaging:
 # Spatial detection (segmentation) knobs - used by segment
 spatial:
   threshold: 0.3         # soma-probability cut, ~0.5-0.6
-  watershed: false       # split touching cells (false = connected components, which merge them)
-  min_distance: 4        # min peak separation in px for watershed seeding
   min_area: 4            # drop detected regions smaller than this many px (0 disables)
   min_radius: 3.0        # or drop regions below this equivalent radius in px
   resize_to: 0           # force each frame to NxN when pixel size is unknown (0 = off)
