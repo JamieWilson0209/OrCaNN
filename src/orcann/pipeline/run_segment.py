@@ -20,10 +20,26 @@ import numpy as np
 from orcann.pipeline import inference as infer
 from orcann.pipeline.cli import list_recordings, list_infer_recordings
 from orcann.pipeline.postprocess import labels_from_prob
+from orcann.run_info import RunInfoError, read_record
 
 
 def _infer_recs(infer_dir, task_id=None):
     return list_infer_recordings(infer_dir, task_id)
+
+
+def _model_of(infer_dir, rec_id):
+    """The model identity recorded by ``infer`` for this recording, or None.
+
+    None means the map predates identities; it is reported as unknown rather
+    than filled in from config, because an unmeasured provenance is not a
+    provenance.
+    """
+    try:
+        rec = read_record(os.path.join(infer_dir, rec_id, infer.META_JSON),
+                          expect_stage="infer")
+    except (RunInfoError, OSError, ValueError):
+        return None
+    return rec.get("model_identity")
 
 
 def _movie_for(rec_id, pre):
@@ -80,7 +96,6 @@ def run(cfg, task_id=None, force=False, sweeps=None):
         _run_sweep(cfg, recs, sweeps); return
 
     os.makedirs(out, exist_ok=True)
-    models = {"spatial": os.path.abspath(cfg.models.spatial) if cfg.models.spatial else None}
     base = dict(threshold=sp.threshold, min_area=sp.min_area,
                 min_radius=sp.min_radius)
     print(f"segment: {len(recs)} recording(s)  {inf} + {pre} -> {out}")
@@ -88,6 +103,10 @@ def run(cfg, task_id=None, force=False, sweeps=None):
         if os.path.exists(os.path.join(out, rec_id, "data", "traces.npy")) and not force:
             print(f"{rec_id:28s} (exists, skipped)")
             continue
+        # The model that made this map, read from its own record. Stamping the
+        # identity config names today would attribute these ROIs to whatever is
+        # selected now, which is not necessarily what produced the map.
+        models = {"spatial": _model_of(inf, rec_id)}
         prob = np.load(os.path.join(inf, rec_id, infer.PROB_NPY))
         maxproj = np.load(os.path.join(inf, rec_id, infer.MAXPROJ_NPY))
         labels = labels_from_prob(prob, **base)

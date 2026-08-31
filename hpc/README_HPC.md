@@ -264,7 +264,8 @@ orcann train_spatial --synthetic --set train_spatial.epochs=1
 ## 4. Outputs
 
 ```
-models/seg_final/segmenter.pt       trained spatial segmenter
+models/trained/<identity>/          models training produced, awaiting promotion
+models/in_use/<identity>/           promoted models; models.spatial selects one, or 'latest'
 results/spatial_eval/report.json    held-out IoU (train_spatial report)
 results/spatial/<rec>/              per recording: labels, centroids, traces,
                                     max_projection, overlay.png

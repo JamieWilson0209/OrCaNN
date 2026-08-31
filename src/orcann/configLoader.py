@@ -41,7 +41,11 @@ class Paths:
 
 @dataclass
 class Models:
-    spatial: Optional[str] = "models/seg_final/segmenter.pt"
+    dir: Optional[str] = "models/in_use"
+    # An identity from that directory, or "latest" for the newest by timestamp.
+    # Not a path: a model reaches the store by being promoted into it, and
+    # naming a file directly would let an unpromoted one into production.
+    spatial: Optional[str] = "latest"
 
 
 # --- recording-wide imaging metadata -----------------------------------------
@@ -114,8 +118,9 @@ class GalleryParams:
 class TrainSpatialParams:
     movies: Optional[str] = "data/annotated/movies"
     masks: Optional[str] = "data/annotated/masks"
-    out: Optional[str] = "models/seg_final"
-    report: Optional[str] = "results/spatial_eval/report.json"
+    name: str = "segmenter"
+    out: Optional[str] = "models/trained"
+    checkpoint: Optional[str] = "models/trained/_in_progress.pt"
     channels: Tuple[str, ...] = ("structural", "max", "variance")
     radii: Tuple[float, ...] = (3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0)
     min_cell_area: int = 0
@@ -161,8 +166,8 @@ class Config:
     # Path-valued fields, resolved against root by resolve_paths().
     _PATH_FIELDS = {
         "paths": ("raw", "pre_processed", "infer", "spatial", "activity", "analysis"),
-        "models": ("spatial",),
-        "train_spatial": ("movies", "masks", "out", "report"),
+        "models": ("dir",),
+        "train_spatial": ("movies", "masks", "out", "checkpoint"),
         "analysis": ("inactive_file",),
     }
 
@@ -358,9 +363,10 @@ _FIELD_DOC = {
     "paths.spatial": "segment output: <spatial>/<recording_id>/",
     "paths.activity": "activity output: <activity>/<recording_id>/ (calcium-format, analysis input)",
     "paths.analysis": "analysis stage output (group figures + tables)",
-    "models.spatial": "trained segmenter (.pt)",
     "imaging.frame_rate": "recording frame rate in Hz",
     "imaging.indicator": "calcium indicator; resolves the AR seed when deconvolution.decay_initialisation is null",
+    "models.dir": "directory of promoted, in-use models",
+    "models.spatial": "model identity to run, or 'latest' for the newest promoted one",
     "spatial.threshold": "soma-probability cut, ~0.5-0.6",
     "spatial.min_area": "drop detected regions smaller than this many px (0 disables)",
     "spatial.min_radius": "or drop regions below this equivalent radius in px",
@@ -391,7 +397,8 @@ _FIELD_DOC = {
     "train_spatial.movies": "dir of training movies (<stem>.tif)",
     "train_spatial.masks": "dir of instance-label masks (<stem>.npy) or ImageJ ROI sets",
     "train_spatial.out": "output dir for the trained segmenter.pt",
-    "train_spatial.report": "optional JSON metrics path (null to skip)",
+    "train_spatial.name": "name component of the trained model's identity",
+    "train_spatial.checkpoint": "per-epoch checkpoint, overwritten; scratch, not selectable",
     "train_spatial.channels": "energy channels: any of structural, max, variance, correlation",
     "train_spatial.radii": "LoG scale bank, cell radii in px",
     "train_spatial.min_cell_area": "strip ROIs smaller than this from training masks (0 = keep all)",

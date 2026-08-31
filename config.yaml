@@ -15,7 +15,8 @@ paths:
 
 # Trained segmenter used by the spatial detection stages
 models:
-  spatial: "models/seg_final/segmenter.pt"  # trained segmenter (.pt)
+  dir: "models/in_use"     # promoted models the pipeline may run
+  spatial: "latest"        # an identity from that dir, or "latest" (newest by timestamp)
 
 # Recording-wide imaging metadata
 imaging:
@@ -75,8 +76,9 @@ gallery:
 train_spatial:
   movies: "data/annotated/movies"              # dir of training movies (<stem>.tif)
   masks: "data/annotated/masks"                # dir of instance-label masks (<stem>.npy) or ImageJ ROI sets
-  out: "models/seg_final"                      # output dir for the trained segmenter.pt
-  report: "results/spatial_eval/report.json"   # optional JSON metrics path (null to skip)
+  name: "segmenter"                            # name component of the trained model's identity
+  out: "models/trained"                        # where training leaves models; promote from here
+  checkpoint: "models/trained/_in_progress.pt" # per-epoch scratch, overwritten, never selectable
   channels: ["structural", "max", "variance"]  # energy channels: any of structural, max, variance, correlation
   radii: [3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0]  # LoG scale bank, cell radii in px
   min_cell_area: 0                             # strip ROIs smaller than this from training masks (0 = keep all)

@@ -12,8 +12,7 @@ import numpy as np
 from orcann.spatial import (
     train_segmenter, load_seg_recording, synthetic_sources,
     predict_prob, best_iou, SegRecording)
-from orcann.pipeline.model_io import save_model
-from orcann.run_info import write_record
+from orcann.pipeline.model_io import save_trained_model
 
 
 def find_pairs(movies_dir, masks_dir):
@@ -68,14 +67,19 @@ def run(cfg, synthetic=False):
 
     out_dir = t.out or "/tmp/seg_synth"
     os.makedirs(out_dir, exist_ok=True)
+    # The per-epoch checkpoint is scratch and goes somewhere of its own. It used
+    # to be written over the model the pipeline was running, so a job killed at
+    # any epoch left an under-trained model in service with the previous one
+    # already gone.
     model = train_segmenter(train, channels=channels, radii_px=radii,
                             patch=t.patch, epochs=t.epochs, loader=loader,
                             pixel_um=t.pixel_um,
-                            checkpoint_path=os.path.join(out_dir, "segmenter.pt"))
-    save_model(model, os.path.join(out_dir, "segmenter.pt"))
+                            checkpoint_path=t.checkpoint or None)
 
     metrics = {"channels": list(t.channels), "radii": list(radii),
-               "n_train": len(train), "held_out": t.holdout}
+               "n_train": len(train), "n_val": len(val), "held_out": t.holdout,
+               "patch": t.patch, "epochs": t.epochs, "synthetic": bool(synthetic),
+               "name": t.name}
     if val:
         ious = []
         for s in val:
@@ -89,6 +93,11 @@ def run(cfg, synthetic=False):
         print("held-out mean IoU (best threshold):", round(metrics["val_iou_mean"], 3))
     else:
         print("final model trained on all data; assess from downstream results.")
-    if t.report:
-        os.makedirs(os.path.dirname(t.report) or ".", exist_ok=True)
-        write_record(t.report, "train_spatial", metrics)
+    # Written once, under an identity derived from what it is, beside its own
+    # report. This is train_spatial.out, not models.dir: finishing a run does not
+    # put a model into service -- promoting it does.
+    identity = save_trained_model(model, out_dir, t.name, report=metrics)
+    print(f"trained model -> {os.path.join(out_dir, identity)}")
+    print(f"  promote it into {cfg.models.dir} to run it "
+          f"(models.spatial: {identity}, or 'latest')")
+    return True

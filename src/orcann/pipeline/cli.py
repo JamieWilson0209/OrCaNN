@@ -64,6 +64,37 @@ def list_spatial_recordings(spatial_dir, task_id=None):
     return recs
 
 
+def _models(cfg, promote):
+    """List what has been trained and what is in service, or promote one model.
+
+    Promotion is its own command because it is its own decision: training
+    produces a model, and a person choosing to run it is a separate event that
+    should appear in the shell history of whoever made it.
+    """
+    from orcann.pipeline import model_io as mio
+    if promote:
+        try:
+            dst = mio.promote(cfg.train_spatial.out, cfg.models.dir, promote)
+        except mio.ModelStoreError as e:
+            raise SystemExit(str(e))
+        print(f"promoted -> {dst}")
+        print(f"  run it with models.spatial: {promote}  (or 'latest')")
+        return True
+    trained = mio.list_models(cfg.train_spatial.out)
+    in_use = mio.list_models(cfg.models.dir)
+    print(f"trained ({cfg.train_spatial.out}) -- not in service until promoted:")
+    for i in trained:
+        print(f"  {i}{'   [promoted]' if i in in_use else ''}")
+    print(f"in use ({cfg.models.dir}):")
+    for i in in_use:
+        print(f"  {i}")
+    if in_use:
+        print(f"latest -> {in_use[-1]}")
+    if not trained and not in_use:
+        print("  nothing yet; run train_spatial")
+    return True
+
+
 def _common(sp):
     sp.add_argument("--config", default="config.yaml",
                     help="YAML config file (default: ./config.yaml)")
@@ -106,6 +137,11 @@ def build_parser():
     p = sub.add_parser("train_spatial", help="train the segmenter")
     _common(p)
     p.add_argument("--synthetic", action="store_true", help="self-test on synthetic data")
+
+    p = sub.add_parser("models", help="list trained models, or put one into service")
+    _common(p)
+    p.add_argument("--promote", metavar="IDENTITY",
+                   help="copy this model from train_spatial.out into models.dir")
 
     return ap
 
@@ -155,6 +191,8 @@ def main(argv=None) -> int:
     elif a.stage == "train_spatial":
         from orcann.pipeline import run_train_spatial
         ok = run_train_spatial.run(cfg, synthetic=a.synthetic)
+    elif a.stage == "models":
+        ok = _models(cfg, a.promote)
     elif a.stage == "analysis":
         from orcann.pipeline import run_analysis
         ok = run_analysis.run(cfg, force=a.force)

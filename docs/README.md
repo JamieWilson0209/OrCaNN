@@ -74,7 +74,8 @@ writes (each dir ships empty with a `.gitkeep`; contents stay local):
 | `data/raw/` | your recordings to process (`.nd2` / `.tif` / `.npy`) |
 | `data/pre_processed/` | motion-corrected movies (output of `motion_correction`; or drop pre-corrected movies here and start at `infer`) |
 | `data/annotated/movies/`, `data/annotated/masks/` | ImageJ-annotated recordings, to **train** the spatial model |
-| `models/seg_final/` | the trained segmenter lands here |
+| `models/trained/` | training leaves models here; not in service |
+| `models/in_use/` | promoted models the pipeline runs |
 | `results/` | stage outputs (`infer/`, `spatial/`, `activity/`, `analysis/`) |
 | `logs/` | SGE job logs |
 
@@ -224,7 +225,7 @@ Not a per-recording array, so `qsub` it directly. Spatial training reads
 `data/annotated/`:
 
 ```bash
-qsub -v CONFIG=config.yaml hpc/jobs/train_spatial.sh    # fits the segmenter -> models/seg_final/
+qsub -v CONFIG=config.yaml hpc/jobs/train_spatial.sh    # fits the segmenter -> models/trained/
 ```
 
 Pre-flight an ImageJ annotation against its movie before training:

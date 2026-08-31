@@ -80,6 +80,37 @@ def recording_id(path: str) -> str:
 
 # SPATIAL — movie -> probability -> labels -> traces
 
+def resample_plan(model, hw, in_um: Optional[float] = None, resize_to: int = 0,
+                  train_um_override: Optional[float] = None) -> Dict[str, object]:
+    """Which rule ``resample_for_model`` will apply to a frame of shape ``hw``.
+
+    The decision and the zoom factors live here rather than in the resampler, so
+    what a stage records is what the stage did. ``branch`` is one of
+    ``physical`` (µm/px matched), ``resize_to`` (explicit override), ``train_hw``
+    (frame-size matched to the model) or ``none`` (the movie is already at the
+    model's size, or the model records no size).
+    """
+    cfg = getattr(model, "config", {})
+    target_um = train_um_override or cfg.get("pixel_um")
+    target_hw = cfg.get("train_hw")
+    H, W = int(hw[0]), int(hw[1])
+    plan: Dict[str, object] = {
+        "source_hw": [H, W], "in_um_per_px": in_um, "target_um_per_px": target_um,
+        "train_hw": [int(v) for v in target_hw] if target_hw else None,
+        "resize_to": int(resize_to)}
+    if target_um and in_um:                            # physical scale match
+        f = in_um / target_um
+        plan.update(branch="physical", zoom_y=float(f), zoom_x=float(f))
+    elif resize_to:                                    # explicit override
+        plan.update(branch="resize_to", zoom_y=resize_to / H, zoom_x=resize_to / W)
+    elif target_hw and (H, W) != tuple(target_hw):     # frame-size match
+        plan.update(branch="train_hw",
+                    zoom_y=target_hw[0] / H, zoom_x=target_hw[1] / W)
+    else:
+        plan.update(branch="none", zoom_y=1.0, zoom_x=1.0)
+    return plan
+
+
 def resample_for_model(model, movie: np.ndarray, in_um: Optional[float] = None,
                        resize_to: int = 0, train_um_override: Optional[float] = None
                        ) -> np.ndarray:
@@ -88,22 +119,14 @@ def resample_for_model(model, movie: np.ndarray, in_um: Optional[float] = None,
     Physical match (µm/px) is preferred when both the recording's pixel size and
     the model's training pixel size are known; otherwise a frame-size match to
     the model's ``train_hw`` is used, with ``resize_to`` as an explicit override
-    for inputs that carry no scale metadata at all.
+    for inputs that carry no scale metadata at all. ``resample_plan`` holds the
+    choice between those rules.
     """
     from scipy.ndimage import zoom
-    cfg = getattr(model, "config", {})
-    target_um = train_um_override or cfg.get("pixel_um")
-    target_hw = cfg.get("train_hw")
-    T, H, W = movie.shape
-    if target_um and in_um:                            # physical scale match
-        f = in_um / target_um
-        return zoom(movie, (1, f, f), order=1).astype(np.float32)
-    if resize_to:                                      # explicit override
-        return zoom(movie, (1, resize_to / H, resize_to / W), order=1).astype(np.float32)
-    if target_hw and tuple((H, W)) != tuple(target_hw):  # frame-size match
-        return zoom(movie, (1, target_hw[0] / H, target_hw[1] / W),
-                    order=1).astype(np.float32)
-    return movie.astype(np.float32)
+    plan = resample_plan(model, movie.shape[1:], in_um, resize_to, train_um_override)
+    if plan["branch"] == "none":
+        return movie.astype(np.float32)
+    return zoom(movie, (1, plan["zoom_y"], plan["zoom_x"]), order=1).astype(np.float32)
 
 
 def traces_from_labels(movie: np.ndarray, labels: np.ndarray,
@@ -238,11 +261,17 @@ def write_overlay(path: str, max_proj: np.ndarray, labels: np.ndarray) -> None:
 # FULL CHAIN — movie -> everything, in one process (the fused runner's core)
 
 def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
-               train_um_override: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray, int]:
+               train_um_override: Optional[float] = None
+               ) -> Tuple[np.ndarray, np.ndarray, Dict[str, object]]:
     """Parameter-independent half of detection (the ``infer`` stage): load ->
     resample to the model's scale -> predict the soma-probability map. Returns
-    ``(prob, max_projection, n_frames)`` at the model's working resolution. No
+    ``(prob, max_projection, provenance)`` at the model's working resolution. No
     threshold, no extraction — the result is cached so tuning never re-runs this.
+
+    ``provenance`` is what the recording said about itself
+    (``RecordingMeta.as_record()``) plus the ``resample`` plan that was applied,
+    so which scaling rule ran, and by how much, is answerable from the stage's
+    record instead of being unrecoverable from the arrays afterwards.
     """
     import torch
 
@@ -251,6 +280,7 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
 
     with open_recording(movie_path) as rec:
         n_frames = rec.meta.n_frames
+        meta_record = rec.meta.as_record()
         # The recording already told us its pixel size when it was opened; reading it
         # here rather than re-opening the file is the only change to what
         # resample_for_model is given. The .nd2 restriction is kept deliberately: a
@@ -268,6 +298,9 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
             idx = torch.linspace(0, n_frames - 1, n_pool).round().long().tolist()
         else:
             idx = list(range(n_frames))
+        plan = resample_plan(spatial_model, (rec.meta.height, rec.meta.width),
+                             in_um=in_um, resize_to=resize_to,
+                             train_um_override=train_um_override)
         pooled = resample_for_model(
             spatial_model, rec.frames(idx, require_finite=True), in_um=in_um,
             resize_to=resize_to, train_um_override=train_um_override)
@@ -285,7 +318,8 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
             block_max = block.max(axis=0)
             maxproj = block_max if maxproj is None else np.maximum(maxproj, block_max)
 
-    return prob, maxproj.astype(np.float32), int(n_frames)
+    provenance = dict(meta_record, resample=plan)
+    return prob, maxproj.astype(np.float32), provenance
 
 
 def resample_to_shape(movie: np.ndarray, hw) -> np.ndarray:
