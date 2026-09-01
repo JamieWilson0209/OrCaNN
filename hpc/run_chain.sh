@@ -101,7 +101,7 @@ SNAPSHOT="${RUN_DIR}/config.yaml"
 N=$(python - "${CONFIG}" "${RUN_DIR}" "${SNAPSHOT}" <<'PY'
 import os, sys
 from orcann.configLoader import Config
-from orcann.pipeline.cli import list_infer_recordings
+from orcann.pipeline.provenance import ProvenanceError, stage_inputs
 
 src, run_dir, snapshot = sys.argv[1], sys.argv[2], sys.argv[3]
 cfg = Config.load(src).resolve_paths()
@@ -113,7 +113,14 @@ cfg.paths.activity = os.path.join(run_dir, "activity")
 cfg.paths.analysis = os.path.join(run_dir, "analysis")
 cfg.dump(snapshot)
 
-print(len(list_infer_recordings(cfg.paths.infer)))
+# The count alone on stdout: the caller tests it as an integer, so a traceback
+# or an explanation here would make that test fail open.
+try:
+    n = len(stage_inputs(cfg, "segment"))
+except ProvenanceError as e:
+    print(e, file=sys.stderr)
+    n = 0
+print(n)
 PY
 )
 

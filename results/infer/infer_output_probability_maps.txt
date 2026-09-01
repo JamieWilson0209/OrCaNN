@@ -1,7 +1,15 @@
 infer output: cached probability maps
 
-One folder per recording, results/infer/<recording_id>/:
-  prob.npy   max_projection.npy   meta.json   prob_overlay.png
+  inf_<model>_<hash>/          e.g. inf_segmenter.4b76_610892b7/
+      <recording>/   prob.npy  max_projection.npy  meta.json  prob_overlay.png
+
+The store is named for the model that ran -- by its content, so the same weights
+promoted under a second name reuse these maps -- and for the movie store they
+were made from. Promoting a different model writes a different store; it does not
+overwrite these and does not leave them looking current.
+
+meta.json is written last and is what marks a recording done: a run killed
+partway leaves a prob.npy no later run will read.
 
 Written by: infer (GPU).   Read by: segment.
 

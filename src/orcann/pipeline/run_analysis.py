@@ -2,19 +2,19 @@
 
 A thin config->call wrapper around the calcium pipeline's group analysis
 (`orcann.analysis.orchestrate.run_analysis`). It reads every calcium-format
-recording folder under results/activity/ (the ones the activity stage wrote),
+recording folder in the activity store this config names,
 scores neuron quality, deduplicates ROIs, computes per-recording functional
 summaries (spike rate, amplitude, pairwise correlation, synchrony, network
 bursts, active fraction), and compares them across genotype and developmental
 day, writing figures + tables to results/analysis/.
 
-Unlike the per-recording stages this is a single aggregate run over all activity
-outputs, so it is submitted directly (not as an array). Genotype and day are
-parsed from each recording folder name by the analysis package's own name
-parsers (D-line convention: line token starting with '3' is Control).
+Unlike the per-recording stages this is a single aggregate run over one activity
+store, so it is submitted directly (not as an array). Genotype and day are parsed
+from each recording folder name by the analysis package's own name parsers
+(D-line convention: line token starting with '3' is Control); the content tag the
+identity ends in is a trailing field they do not read.
 """
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +22,37 @@ logger = logging.getLogger(__name__)
 def run(cfg, force=False):
     from orcann.analysis.orchestrate import run_analysis
 
-    src, out = cfg.paths.activity, cfg.paths.analysis
+    from orcann.pipeline import provenance as prov
+
     ap = cfg.analysis
-    if not os.path.isdir(src):
-        print(f"analysis: no activity outputs in {src} (run activity first)")
-        return False
-    have = [d for d in os.listdir(src)
-            if os.path.isfile(os.path.join(src, d, "data", "temporal_traces.npy"))]
+    try:
+        chain = prov.chain(cfg)
+        src = prov.require_store(cfg.paths.activity, chain.activity, "activity")
+    except prov.ProvenanceError as e:
+        raise SystemExit(str(e))
+    out = prov.store_dir(cfg.paths.analysis, chain.analysis)
+    have = prov.list_dir_records(src, prov.RUN_INFO, prov.STAGE_ACTIVITY)
     if not have:
-        print(f"analysis: no recordings with temporal_traces.npy in {src} "
+        print(f"analysis: no recordings with an activity record in {src} "
               f"(run activity first)")
+        return False
+
+    # One acquisition must not enter the cohort twice. It can: a raw recording
+    # replaced by a re-export or a re-acquisition under the same filename takes a
+    # new identity, and the results made from the old contents stay where they
+    # are. Both are honest records of different data, but the group statistics
+    # would count one organoid as two, so the run stops rather than averaging
+    # them.
+    by_stem = {}
+    for rec in have:
+        by_stem.setdefault(prov.stem_of(rec), []).append(rec)
+    twice = {k: v for k, v in by_stem.items() if len(v) > 1}
+    if twice:
+        for stem, recs in sorted(twice.items()):
+            print(f"analysis: {stem} is present {len(recs)} times: "
+                  f"{', '.join(sorted(recs))}")
+        print(f"analysis: each of those is one acquisition under two different "
+              f"contents. Delete the folders you do not want from {src}.")
         return False
 
     print(f"analysis: {len(have)} recording(s)  {src} -> {out}")

@@ -1,4 +1,4 @@
-"""Activity stage (CPU): results/spatial + movie -> results/activity.
+"""Activity stage (CPU): a segment store + the movies -> results/activity/<store>/.
 
 The bridge from spatial segmentation to functional readouts, and the seam where
 OrCaNN's detection hands off to the calcium pipeline's baseline / deconvolution /
@@ -14,11 +14,11 @@ gallery / analysis. For each segmented recording it:
      plus run_info.json (dims + frame rate);
   5. renders the interactive HTML gallery.
 
-Recordings whose temporal_traces.npy already exists are skipped unless force=True.
-The output folder is named by recording_id, so the genotype/day parsing in the
-analysis stage keys off it exactly as before.
+A recording whose record is already in the store for these settings is skipped
+unless force=True. The per-recording folder is named by the recording's identity,
+whose leading fields are the acquisition name, so the genotype/day parsing in the
+analysis stage keys off it as before.
 """
-import json
 import logging
 import os
 
@@ -26,26 +26,20 @@ import numpy as np
 from scipy.sparse import csc_matrix, save_npz
 
 from orcann.pipeline import inference as infer
-from orcann.pipeline.cli import list_recordings, list_spatial_recordings
-from orcann.run_info import write as write_run_info, read_record, RunInfoError
+from orcann.pipeline import provenance as prov
+from orcann.pipeline.cli import store_movies
+from orcann.run_info import (FILENAME as RUN_INFO_FILENAME, RunInfoError,
+                             read_record, write as write_run_info)
 
 logger = logging.getLogger(__name__)
-
-
-def _movie_for(rec_id, pre):
-    """The motion-corrected movie whose recording_id matches rec_id, or None."""
-    for f in list_recordings(pre):
-        if infer.recording_id(f) == rec_id:
-            return f
-    return None
 
 
 def _motion_meta(movie_path):
     """Motion-correction metadata written beside the corrected movie, if present.
 
-    `motion_correction` writes `<stem>_mc.json` (shift summary) and, when the
-    array is available, `<stem>_mc_shifts.npy` (per-frame [dy, dx]) next to
-    `<stem>_mc.tif`. Either may be absent — a recording corrected outside this
+    `motion_correction` writes `<identity>.json` (shift summary) and, when the
+    array is available, `<identity>_shifts.npy` (per-frame [dy, dx]) next to
+    `<identity>.tif`. Either may be absent — a recording corrected outside this
     pipeline has neither — and either being absent is carried through rather than
     filled in: no motion block is written, the analysis stage reads the metrics
     as NaN, and its motion gates exclude the recording for unknown motion rather
@@ -54,12 +48,12 @@ def _motion_meta(movie_path):
     """
     if not movie_path:
         return None, None
-    base = os.path.splitext(movie_path)[0]            # .../<stem>_mc
+    base = os.path.splitext(movie_path)[0]            # .../<identity>
     summary, shifts = None, None
     jf = base + ".json"
     if os.path.isfile(jf):
         try:
-            summary = read_record(jf, expect_stage="motion_correction")
+            summary = read_record(jf, expect_stage=prov.STAGE_MOTION)
         except RunInfoError as e:
             logger.error(f"  motion summary unusable, so this recording will be "
                          f"excluded for unknown motion: {e}")
@@ -155,7 +149,8 @@ def _deconvolve(cfg, c_dff):
 
 def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
                    noise, censored, rejected, deconv_used, labels, mean_proj, max_proj, source,
-                   motion=None, motion_shifts=None, global_intensity=None):
+                   motion=None, motion_shifts=None, global_intensity=None,
+                   provenance=None):
     """Write the calcium-format per-recording folder + run_info.json."""
     from orcann.activity.roi_adapter import footprints_from_labels
 
@@ -187,6 +182,7 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
 
     payload = {
         "recording_id": rec_id,
+        **(provenance or {}),
         "frame_rate": float(cfg.imaging.frame_rate),
         "indicator": cfg.imaging.indicator,
         # The AR seed, not a measured transient decay.
@@ -241,23 +237,35 @@ def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
 
 
 def run(cfg, task_id=None, force=False):
-    sp, pre, out = cfg.paths.spatial, cfg.paths.pre_processed, cfg.paths.activity
-    recs = list_spatial_recordings(sp, task_id)
+    try:
+        chain = prov.chain(cfg)
+        sp = prov.require_store(cfg.paths.spatial, chain.segment, "segment")
+    except prov.ProvenanceError as e:
+        raise SystemExit(str(e))
+    seg_record = os.path.join(infer.DATA_DIRNAME, infer.META_JSON)
+    recs = prov.list_dir_records(sp, seg_record, prov.STAGE_SEGMENT, task_id)
     if not recs:
         print(f"activity: no segmented recordings in {sp} (run segment first)")
-        return
+        return False
+
+    out = prov.store_dir(cfg.paths.activity, chain.activity)
+    movies = dict((i, f) for f, i in store_movies(chain.motion_dir, chain.motion))
     os.makedirs(out, exist_ok=True)
-    print(f"activity: {len(recs)} recording(s)  {sp} + {pre} -> {out}")
+    print(f"activity: {len(recs)} recording(s)  {sp} + {chain.motion_dir} -> {out}")
+    missing = False
     for rec_id in recs:
         out_dir = os.path.join(out, rec_id)
-        if os.path.exists(os.path.join(out_dir, "data", "temporal_traces.npy")) and not force:
-            print(f"{rec_id:28s} (exists, skipped)")
+        if prov.is_done(os.path.join(out_dir, RUN_INFO_FILENAME),
+                        prov.STAGE_ACTIVITY) and not force:
+            print(f"{rec_id:32s} (current, skipped)")
             continue
 
         traces, labels, centroids, max_proj = _load_spatial(sp, rec_id)
-        mv = _movie_for(rec_id, pre)
+        mv = movies.get(rec_id)
         if mv is None:
-            print(f"{rec_id:28s} ERROR: source movie not found in {pre}, skipping")
+            print(f"{rec_id:32s} ERROR: no movie for this recording in "
+                  f"{chain.motion_dir}, skipping")
+            missing = True
             continue
         from orcann.pipeline.extraction import _load_movie
         movie = _load_movie(mv)
@@ -288,10 +296,13 @@ def run(cfg, task_id=None, force=False):
                        deconv_used=deconv_used,
                        labels=labels, mean_proj=mean_proj, max_proj=max_proj,
                        source=mv, motion=motion, motion_shifts=motion_shifts,
-                       global_intensity=gi)
+                       global_intensity=gi,
+                       provenance={"upstream_store": chain.segment,
+                                   "stage_version": prov.ACTIVITY_VERSION})
         _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
                          c_dff, c_raw, denoised, spikes)
 
         n_spk = int((spikes > 0).sum()) if spikes is not None else 0
-        print(f"{rec_id:28s} {int(c_dff.shape[0]):6d} cells  {n_spk:8d} spikes")
-    print(f"activity outputs -> {out}/<recording_id>/  (now run: analysis)")
+        print(f"{rec_id:32s} {int(c_dff.shape[0]):6d} cells  {n_spk:8d} spikes")
+    print(f"activity outputs -> {out}/<recording>/  (now run: analysis)")
+    return not missing

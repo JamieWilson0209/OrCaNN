@@ -1,9 +1,10 @@
 """Motion-correction stage: data/raw -> data/pre_processed (caiman env).
 
 NoRMCorre needs caiman, which is NOT in the segmenter/inference env, so this stage
-runs in the caiman env. Each recording is corrected and written as
-<stem>_mc.tif (T,H,W float32) plus <stem>_mc.json (shift summary). Recordings whose
-corrected movie already exists are skipped unless force=True.
+runs in the caiman env. Each recording is corrected and written into a store named
+for the correction settings, as <identity>.tif (T,H,W float32) beside
+<identity>.json (shift summary). A recording whose record is already in that
+store is skipped unless force=True.
 
 The corrected TIFF carries the source's own axes and pixel size, so the stages
 below it read a self-describing file rather than assuming (T, H, W) at an unknown
@@ -13,7 +14,8 @@ import os
 
 import numpy as np
 
-from orcann.pipeline.cli import list_recordings
+from orcann.pipeline import provenance as prov
+from orcann.pipeline.cli import identified_recordings
 from orcann.run_info import write_record
 
 
@@ -64,28 +66,26 @@ def _write_corrected(path, movie, meta):
                      metadata=None, photometric="minisblack", **kw)
 
 
-def _done(pre_dir, stem):
-    return (os.path.exists(os.path.join(pre_dir, stem + "_mc.tif"))
-            or os.path.exists(os.path.join(pre_dir, stem + "_mc.npy")))
-
-
 def run(cfg, task_id=None, force=False):
     from orcann.pipeline.extraction import open_recording
     from orcann.pipeline.motion_correction import correct_motion
 
     raw, pre = cfg.paths.raw, cfg.paths.pre_processed
     mc = cfg.motion_correction
-    os.makedirs(pre, exist_ok=True)
-    files = list_recordings(raw, task_id)
-    if not files:
-        print(f"motion_correction: no recordings in {raw}"); return
+    store_id = prov.motion_identity(cfg)
+    store = prov.store_dir(pre, store_id)
+    os.makedirs(store, exist_ok=True)
+    pairs = identified_recordings(raw, task_id)
+    if not pairs:
+        print(f"motion_correction: no recordings in {raw}")
+        return False
 
-    print(f"motion_correction: {len(files)} recording(s)  {raw} -> {pre}")
-    print(f"{'recording':24s} {'T,H,W':>16} {'max dy,dx':>13} {'sec':>6}")
-    for f in files:
-        stem = os.path.splitext(os.path.basename(f))[0]
-        if _done(pre, stem) and not force:
-            print(f"{stem:24s} {'(exists, skipped)':>16}")
+    print(f"motion_correction: {len(pairs)} recording(s)  {raw} -> {store}")
+    print(f"{'recording':32s} {'T,H,W':>16} {'max dy,dx':>13} {'sec':>6}")
+    for f, ident in pairs:
+        record = os.path.join(store, ident + ".json")
+        if prov.is_done(record, prov.STAGE_MOTION) and not force:
+            print(f"{ident:32s} {'(current, skipped)':>16}")
             continue
         # No require_finite here: this stage is entitled to non-finite borders and
         # sanitises them itself. The metadata is read alongside the pixels so the
@@ -94,17 +94,23 @@ def run(cfg, task_id=None, force=False):
             movie = rec.array().astype(np.float32)
             meta = rec.meta
         res = correct_motion(movie, mode=mc.mode, max_shift=mc.max_shift)
-        out_mov = os.path.join(pre, stem + "_mc.tif")
-        _write_corrected(out_mov, res.corrected.astype(np.float32), meta)
-        s = res.summary()
-        write_record(os.path.join(pre, stem + "_mc.json"),
-                     "motion_correction", dict(s, recording_id=stem))
+        _write_corrected(os.path.join(store, ident + ".tif"),
+                         res.corrected.astype(np.float32), meta)
         # Per-frame [dy, dx] shifts, so the activity stage can carry them into
-        # results/activity/ for the analysis stage's residual-motion QC metric.
+        # the activity store for the analysis stage's residual-motion QC metric.
         if getattr(res, "shifts", None) is not None:
-            np.save(os.path.join(pre, stem + "_mc_shifts.npy"),
+            np.save(os.path.join(store, ident + "_shifts.npy"),
                     np.asarray(res.shifts, np.float32))
+        s = res.summary()
+        # The record last, and only now: it is what marks this recording done, so
+        # a job killed between the two writes leaves a movie the next run cannot
+        # see rather than one it would trust.
+        write_record(record, prov.STAGE_MOTION,
+                     dict(s, recording_id=ident,
+                          stage_version=prov.MOTION_VERSION,
+                          source=os.path.abspath(f)))
         T, H, W = res.corrected.shape
         mx = f"{s['max_shift_y']:.1f},{s['max_shift_x']:.1f}"
-        print(f"{stem:24s} {f'{T},{H},{W}':>16} {mx:>13} {s['elapsed_seconds']:6.0f}")
-    print(f"corrected movies -> {pre}")
+        print(f"{ident:32s} {f'{T},{H},{W}':>16} {mx:>13} {s['elapsed_seconds']:6.0f}")
+    print(f"corrected movies -> {store}  (now run: infer)")
+    return True

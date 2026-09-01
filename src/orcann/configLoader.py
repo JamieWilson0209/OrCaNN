@@ -31,12 +31,14 @@ from typing import Any, Optional, Tuple
 # --- workspace layout + trained model ----------------------------------------
 @dataclass
 class Paths:
+    # Roots, not output folders: each stage writes into a folder under its root
+    # named for the settings it ran under -- see orcann/pipeline/provenance.py.
     raw: str = "data/raw"
-    pre_processed: str = "data/pre_processed"
-    infer: str = "results/infer"         # cached probability maps (infer stage output)
-    spatial: str = "results/spatial"     # segment output: <spatial>/<recording_id>/
-    activity: str = "results/activity"   # activity output: <activity>/<recording_id>/ (calcium-format)
-    analysis: str = "results/analysis"   # analysis stage output (group figures + tables)
+    pre_processed: str = "data/pre_processed"   # <root>/mc_<settings>/<recording>.tif
+    infer: str = "results/infer"                # <root>/inf_<model>_<settings>/<recording>/
+    spatial: str = "results/spatial"            # <root>/seg_<settings>/<recording>/
+    activity: str = "results/activity"          # <root>/act_<settings>/<recording>/
+    analysis: str = "results/analysis"          # <root>/ana_<settings>/
 
 
 @dataclass

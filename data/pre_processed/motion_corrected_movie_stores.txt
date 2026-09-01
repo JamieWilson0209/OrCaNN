@@ -1,0 +1,22 @@
+motion-corrected movies, one store per settings choice
+
+  mc_<settings>_<hash>/        e.g. mc_auto.ms20_d9474cc6/
+      <recording>.tif          the corrected movie
+      <recording>.json         shift summary; also what marks the recording done
+      <recording>_shifts.npy   per-frame [dy, dx], for the analysis motion QC
+
+The store is named for the motion-correction settings that produced it, so
+re-running with them unchanged finds this output and skips, and changing one
+writes a new store beside this one instead of over it.
+
+Movies corrected outside this pipeline go in the root of this folder rather than
+in a store, and the pipeline starts at infer. They are identified by content the
+same way raw recordings are; having no motion record, they carry no motion QC
+into the analysis stage, which excludes them for unknown motion rather than
+treating them as still.
+
+Written by: motion_correction.   Read by: infer, segment, activity.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

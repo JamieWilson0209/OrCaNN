@@ -37,16 +37,14 @@ if [ -n "${EXPECTED_N:-}" ]; then
     python - "${CONFIG}" "${EXPECTED_N}" <<'PY' || true
 import os, sys
 from orcann.configLoader import Config
-from orcann.pipeline.cli import list_infer_recordings
+from orcann.pipeline import provenance as prov
 
 cfg = Config.load(sys.argv[1]).resolve_paths()
 expected_n = int(sys.argv[2])
 
-wanted = list_infer_recordings(cfg.paths.infer)
-act = cfg.paths.activity
-got = set(os.listdir(act)) if os.path.isdir(act) else set()
-got = {d for d in got
-       if os.path.isfile(os.path.join(act, d, "data", "temporal_traces.npy"))}
+wanted = prov.stage_inputs(cfg, "activity")
+act = prov.store_dir(cfg.paths.activity, prov.chain(cfg).activity)
+got = set(prov.list_dir_records(act, prov.RUN_INFO, prov.STAGE_ACTIVITY))
 
 if len(got) < expected_n:
     missing = [r for r in wanted if r not in got]

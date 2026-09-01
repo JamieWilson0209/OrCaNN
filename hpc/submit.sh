@@ -47,18 +47,17 @@ set +u; source activate "${ENV_PREFIX}"; set -u
 N=$(python - "${STAGE}" "${CONFIG}" <<'PY'
 import sys
 from orcann.configLoader import Config
-from orcann.pipeline.cli import (list_recordings, list_infer_recordings,
-                                  list_spatial_recordings)
+from orcann.pipeline.provenance import ProvenanceError, stage_inputs
 stage, cfgpath = sys.argv[1], sys.argv[2]
 cfg = Config.load(cfgpath).resolve_paths()
-if stage == "motion_correct":
-    n = len(list_recordings(cfg.paths.raw))
-elif stage == "infer":
-    n = len(list_recordings(cfg.paths.pre_processed))
-elif stage == "segment":
-    n = len(list_infer_recordings(cfg.paths.infer))
-else:  # activity
-    n = len(list_spatial_recordings(cfg.paths.spatial))
+# stdout carries the count and nothing else -- the caller compares it as an
+# integer, and a line of explanation mixed in would make that test fail open and
+# submit an array sized from an error message. The reason goes to stderr.
+try:
+    n = len(stage_inputs(cfg, stage))
+except ProvenanceError as e:
+    print(e, file=sys.stderr)
+    n = 0
 print(n)
 PY
 )

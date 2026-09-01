@@ -173,7 +173,8 @@ when a job reports an environment problem.
 
 ```
 data/raw/                 raw recordings (motion_correction input)
-data/pre_processed/       motion-corrected movies (infer input)
+data/pre_processed/       motion-corrected movies, one store per settings choice
+                          (infer input; movies corrected elsewhere go in the root)
 data/annotated/movies/    annotated recordings for segmenter training
 data/annotated/masks/     matching instance masks (.npy) or ImageJ ROI sets (same stem)
 ```
@@ -219,8 +220,8 @@ exactly this reason; `hpc/run_chain.sh` submits them as a dependency chain
 once and caches the probability map; `segment` (CPU, no model) thresholds and
 extracts. So tuning `spatial.threshold` / `spatial.min_radius` only re-runs the
 cheap `segment` array — the GPU pass is done once. To choose values, preview a
-grid without extracting (writes `results/spatial/<rec>/sweep_montage.png` + a
-`sweep_table.csv` per recording):
+grid without extracting (writes `sweep_montage.png` + a `sweep_table.csv` per
+recording, into the segment store the current settings name):
 
 ```bash
 qsub -t 1-N -v CONFIG=config.yaml,SWEEP='threshold=0.5:0.6:0.7;min_radius=0:2' hpc/jobs/segment.sh
@@ -264,16 +265,22 @@ orcann train_spatial --synthetic --set train_spatial.epochs=1
 ## 4. Outputs
 
 ```
-models/trained/<identity>/          models training produced, awaiting promotion
+models/trained/<identity>/          models training produced, awaiting promotion;
+                                    train_report.json (held-out IoU) sits beside each
 models/in_use/<identity>/           promoted models; models.spatial selects one, or 'latest'
-results/spatial_eval/report.json    held-out IoU (train_spatial report)
-results/spatial/<rec>/              per recording: labels, centroids, traces,
+results/spatial/<store>/<rec>/      per recording: labels, centroids, traces,
                                     max_projection, overlay.png
-results/activity/<rec>/             per recording (calcium-format): temporal_traces,
+results/activity/<store>/<rec>/     per recording (calcium-format): temporal_traces,
                                     temporal_traces_raw, traces_denoised, spike_trains,
                                     spatial_footprints.npz, max/mean_projection,
                                     run_info.json, gallery.html
-results/analysis/                   group figures + tables (genotype + longitudinal)
+results/analysis/<store>/           group figures + tables (genotype + longitudinal)
+
+Each `<store>` is named for the settings that stage ran under and the store it
+read, so a stage re-run with the same settings skips and a changed setting writes
+beside the old output instead of over it. `orcann status --config config.yaml`
+prints which stores a config names and which recordings are already current in
+them; it runs nothing, so it is safe on the login node.
 ```
 
 ## Still to confirm at data intake

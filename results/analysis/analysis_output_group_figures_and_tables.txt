@@ -1,8 +1,15 @@
 group analysis output: figures and tables (one aggregate run, not per-recording)
 
-  data/     analysis_results.json  dataset_features.csv  selected_rois.csv
-            quality_gating.json  outlier_report.txt
-  figures/  grouped QC, genotype and developmental-day comparison figures
+  ana_<hash>/
+      data/     analysis_results.json  dataset_features.csv  selected_rois.csv
+                quality_gating.json  outlier_report.txt
+      figures/  grouped QC, genotype and developmental-day comparison figures
+
+Aggregates one activity store -- the one this config names -- and is named for
+that store and the analysis settings. It refuses a cohort holding one acquisition
+twice, which happens when a raw file was replaced between runs and both the old
+and the new results are still present: counting one organoid as two would be
+worse than stopping.
 
 Written by: analysis.
 

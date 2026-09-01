@@ -3,6 +3,17 @@ raw recordings (pipeline input)
 Put one file per recording here:
   .nd2 / .tif / .tiff / .npy   shape (T, H, W)
 
+Each one is given an identity the first time a stage reads it: the filename,
+plus a four-character tag over the file's shape and its first and last frames.
+Every stage below names its output after that identity, so a recording keeps one
+name the whole way down, and replacing a file with different data under the same
+name produces a new recording rather than overwriting the old results.
+
+Two files that are the same recording twice -- the same pixels in two containers
+-- are refused by name rather than one being chosen silently. A raw recording and
+a denoised export of it are not that: their contents differ, so they are two
+recordings and both are processed.
+
 Read by: motion_correction (or start at infer if already motion-corrected).
 
 This folder ships empty to preserve the directory structure so the tree survives a browser

@@ -34,7 +34,7 @@ from typing import Any, Dict, Optional, Tuple
 # or removed. Readers refuse anything they do not recognise, so a bump is a
 # deliberate break: it makes every older recording re-run rather than silently
 # reinterpreted.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 FILENAME = "run_info.json"
 
@@ -89,7 +89,7 @@ def write_record(path: str, stage: str, payload: Dict[str, Any]) -> str:
     ``stage`` — whatever the file is named and wherever it sits, so a reader can
     establish what it is holding before interpreting anything else. The files
     keep their existing names because each lives beside the data it describes:
-    ``<stem>_mc.json`` next to the corrected movie, ``meta.json`` in the spatial
+    ``<identity>.json`` next to the corrected movie, ``meta.json`` in the spatial
     results, ``run_info.json`` in the activity results.
     """
     body = {"schema_version": SCHEMA_VERSION, "stage": stage}

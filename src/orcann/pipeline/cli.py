@@ -6,13 +6,19 @@
     orcann activity          --config config.yaml [--force] [--task-id N]
     orcann analysis          --config config.yaml [--force]
     orcann train_spatial     --config config.yaml [--synthetic]
+    orcann status            --config config.yaml
 
 Spatial detection is split: `infer` runs the GPU model once and caches the
 probability map; `segment` (CPU, no model) thresholds + extracts and is the cheap
 stage you re-run while tuning. `activity` then baseline-corrects, deconvolves
 (OASIS) and renders the per-recording HTML gallery; `analysis` aggregates across
-recordings. Every subcommand accepts --set section.key=value (repeatable) and
---dump-config PATH. Paths and the model live in the config.
+recordings. `status` runs nothing and prints which stages are already current.
+
+Every stage writes into a folder named for the settings it ran under, so a stage
+re-run with those settings unchanged finds its own output and skips, and a
+changed setting writes somewhere new rather than over it. Every subcommand
+accepts --set section.key=value (repeatable) and --dump-config PATH. Paths and
+the model live in the config.
 """
 import argparse
 import glob
@@ -22,16 +28,19 @@ from orcann.configLoader import Config
 from orcann.logging_setup import LEVELS, DEFAULT_LEVEL, configure as configure_logging
 
 _EXTS = ("*.nd2", "*.tif", "*.tiff", "*.npy")
-# Sidecars the motion_correction stage writes next to each corrected movie in
-# data/pre_processed. They must not be mistaken for recordings: <stem>_mc.json is
-# already excluded (not a movie extension), but <stem>_mc_shifts.npy matches the
-# *.npy glob and would otherwise be counted as an extra recording, doubling the
-# infer/segment array size and mapping tasks onto shift arrays.
-_SIDECAR_SUFFIXES = ("_mc_shifts.npy", "_shifts.npy")
+# Sidecars written beside each corrected movie in a motion-correction store. They
+# must not be mistaken for recordings: <identity>.json is already excluded (not a
+# movie extension), but <identity>_shifts.npy matches the *.npy glob and would
+# otherwise be counted as an extra recording, doubling the infer/segment array
+# size and mapping tasks onto shift arrays.
+_SIDECAR_SUFFIXES = ("_shifts.npy",)
 
 
 def list_recordings(dirpath, task_id=None):
-    """Sorted recordings in a directory; with task_id, just the 1-based Nth (SGE array)."""
+    """Sorted movie files in a directory; with task_id, just the 1-based Nth (SGE array).
+
+    Files only, so the store folders under a results root are passed over.
+    """
     if not dirpath or not os.path.isdir(dirpath):
         return []
     files = sorted(sum([glob.glob(os.path.join(dirpath, e)) for e in _EXTS], []))
@@ -42,26 +51,69 @@ def list_recordings(dirpath, task_id=None):
     return files
 
 
-def list_infer_recordings(infer_dir, task_id=None):
-    """recording_ids under a results/infer dir that have a cached prob.npy."""
-    if not os.path.isdir(infer_dir):
-        return []
-    recs = sorted(d for d in os.listdir(infer_dir)
-                  if os.path.isfile(os.path.join(infer_dir, d, "prob.npy")))
+def identified_recordings(dirpath, task_id=None):
+    """``[(path, identity)]`` for the movies in a directory, in path order.
+
+    Identity is minted here, at the edge of the pipeline, by reading two frames
+    of each file; every stage below copies the string rather than deriving it
+    again. Two files that mint the same identity are the same recording twice —
+    the same pixels in two containers, say — and the run stops naming both,
+    because either choice would silently drop one of them and the results would
+    not say which was used.
+    """
+    from orcann.pipeline.extraction import IntakeError
+    from orcann.pipeline.provenance import recording_identity
+
+    files = list_recordings(dirpath)
+    seen = {}
+    for f in files:
+        # A file that cannot be read stops the run rather than being passed over:
+        # a directory the pipeline cannot fully account for is not a cohort. It is
+        # named here, at enumeration, because that is where it is noticed -- and
+        # every task of an array will say the same thing, which is the point.
+        try:
+            seen.setdefault(recording_identity(f), []).append(f)
+        except (IntakeError, OSError, ValueError) as e:
+            raise SystemExit(
+                f"{f}: cannot be read as a recording, so the recordings in "
+                f"{dirpath} cannot be enumerated ({e}). Move it out of the "
+                f"directory or correct it.")
+    clashes = {i: fs for i, fs in seen.items() if len(fs) > 1}
+    if clashes:
+        lines = "\n".join(f"  {i}\n    " + "\n    ".join(fs)
+                          for i, fs in sorted(clashes.items()))
+        raise SystemExit(
+            f"{dirpath}: these files are the same recording under more than one "
+            f"name -- same frame count, frame size and end frames:\n{lines}\n"
+            f"Remove or rename all but one of each.")
+    pairs = [(f, i) for i, fs in seen.items() for f in fs]
+    pairs.sort()
     if task_id is not None:
-        return [recs[task_id - 1]] if 1 <= task_id <= len(recs) else []
-    return recs
+        return [pairs[task_id - 1]] if 1 <= task_id <= len(pairs) else []
+    return pairs
 
 
-def list_spatial_recordings(spatial_dir, task_id=None):
-    """recording_ids under a results/spatial dir that have data/traces.npy."""
-    if not os.path.isdir(spatial_dir):
-        return []
-    recs = sorted(d for d in os.listdir(spatial_dir)
-                  if os.path.isfile(os.path.join(spatial_dir, d, "data", "traces.npy")))
-    if task_id is not None:
-        return [recs[task_id - 1]] if 1 <= task_id <= len(recs) else []
-    return recs
+def store_movies(store, store_identity, task_id=None):
+    """``[(path, identity)]`` for the movies a motion-correction store offers.
+
+    A store this pipeline wrote names its movies by identity and vouches for
+    them with a record each, so nothing needs re-reading. Movies corrected
+    elsewhere and dropped into ``paths.pre_processed`` have neither, so they are
+    identified the same way raw recordings are.
+    """
+    from orcann.pipeline import provenance as prov
+
+    if store_identity == prov.EXTERNAL:
+        return identified_recordings(store, task_id)
+    out = []
+    for ident in prov.list_flat_records(store, prov.STAGE_MOTION, task_id):
+        mv = prov.movie_in_store(store, ident)
+        if mv is None:
+            raise SystemExit(
+                f"{store}: {ident} has a motion-correction record but no movie "
+                f"beside it. Delete the record and re-run motion_correction.")
+        out.append((mv, ident))
+    return out
 
 
 def _models(cfg, promote):
@@ -95,6 +147,79 @@ def _models(cfg, promote):
     return True
 
 
+def _status(cfg):
+    """Which stages are current for which recordings, and where their output is.
+
+    The one place that answers "will this run do anything?" without running it.
+    Every state it prints is read from a record, so it reports what a stage will
+    actually decide rather than what the config intends.
+    """
+    from orcann.pipeline import inference as infer
+    from orcann.pipeline import provenance as prov
+
+    mc_id = prov.motion_identity(cfg)
+    try:
+        where = prov.motion_store(cfg)
+    except prov.ProvenanceError:
+        where = (prov.store_dir(cfg.paths.pre_processed, mc_id), mc_id)
+    try:
+        chain = prov.chain(cfg, motion=where)
+    except prov.ProvenanceError as e:
+        print(f"status: {e}")
+        return False
+
+    stores = [("motion_correction", chain.motion_dir),
+              ("infer", prov.store_dir(cfg.paths.infer, chain.infer)),
+              ("segment", prov.store_dir(cfg.paths.spatial, chain.segment)),
+              ("activity", prov.store_dir(cfg.paths.activity, chain.activity)),
+              ("analysis", prov.store_dir(cfg.paths.analysis, chain.analysis))]
+    print(f"model in service: {chain.model}")
+    for name, d in stores:
+        print(f"  {name:18s} {d}{'' if os.path.isdir(d) else '   (not yet)'}")
+
+    # Raw recordings when they are readable, and whatever the corrected store
+    # holds otherwise: a cohort whose raw files live on the cluster still has a
+    # status worth printing on the machine holding the results.
+    try:
+        pairs = identified_recordings(cfg.paths.raw)
+    except SystemExit as e:
+        print(f"\n{e}")
+        return False
+    idents = [i for _, i in pairs]
+    if not idents:
+        idents = prov.list_flat_records(chain.motion_dir, prov.STAGE_MOTION) \
+            if chain.motion != prov.EXTERNAL else [i for _, i in store_movies(*where)]
+
+    done = {
+        "mc": set(prov.list_flat_records(chain.motion_dir, prov.STAGE_MOTION)),
+        "infer": set(prov.list_dir_records(
+            prov.store_dir(cfg.paths.infer, chain.infer),
+            infer.META_JSON, prov.STAGE_INFER)),
+        "segment": set(prov.list_dir_records(
+            prov.store_dir(cfg.paths.spatial, chain.segment),
+            os.path.join(infer.DATA_DIRNAME, infer.META_JSON), prov.STAGE_SEGMENT)),
+        "activity": set(prov.list_dir_records(
+            prov.store_dir(cfg.paths.activity, chain.activity),
+            prov.RUN_INFO, prov.STAGE_ACTIVITY)),
+    }
+    if chain.motion == prov.EXTERNAL:
+        done["mc"] = set(idents)          # corrected elsewhere; taken as given
+
+    # Recordings in a store with no raw file behind them: a recording that was
+    # replaced or removed since it was processed. Its results are not wrong, but
+    # nothing upstream will refresh them, and the analysis stage refuses a cohort
+    # holding one acquisition twice -- so they are shown rather than left out.
+    stored = sorted(set().union(*done.values()) - set(idents))
+    cols = ["mc", "infer", "segment", "activity"]
+    print(f"\n{'recording':40s} " + " ".join(f"{c:>9s}" for c in cols))
+    for i in sorted(idents) + stored:
+        marks = " ".join(f"{('current' if i in done[c] else '-'):>9s}" for c in cols)
+        print(f"{i:40s} {marks}{'   (no raw file)' if i in stored else ''}")
+    if not idents and not stored:
+        print("(no recordings)")
+    return True
+
+
 def _common(sp):
     sp.add_argument("--config", default="config.yaml",
                     help="YAML config file (default: ./config.yaml)")
@@ -113,30 +238,36 @@ def build_parser():
     sub = ap.add_subparsers(dest="stage", required=True, metavar="<stage>")
 
     for name, helptext in [
-            ("motion_correction", "data/raw -> data/pre_processed (caiman env)"),
-            ("infer", "pre_processed -> results/infer (GPU; cache prob maps)"),
-            ("activity", "results/spatial -> results/activity (dF/F0, OASIS, gallery)")]:
+            ("motion_correction", "data/raw -> a pre_processed store (caiman env)"),
+            ("infer", "corrected movies -> an infer store (GPU; cache prob maps)"),
+            ("activity", "a segment store -> an activity store (dF/F0, OASIS, gallery)")]:
         p = sub.add_parser(name, help=helptext)
         _common(p)
-        p.add_argument("--force", action="store_true", help="redo recordings whose output exists")
+        p.add_argument("--force", action="store_true",
+                       help="redo recordings that are already current")
         p.add_argument("--task-id", type=int, default=None,
                        help="process only the Nth recording (SGE array)")
 
-    p = sub.add_parser("segment", help="results/infer + movie -> results/spatial (CPU; threshold+extract)")
+    p = sub.add_parser("segment", help="an infer store + movies -> a segment store (CPU; threshold+extract)")
     _common(p)
-    p.add_argument("--force", action="store_true", help="redo recordings whose output exists")
+    p.add_argument("--force", action="store_true",
+                   help="redo recordings that are already current")
     p.add_argument("--task-id", type=int, default=None,
                    help="process only the Nth recording (SGE array)")
     p.add_argument("--sweep", action="append", default=[], metavar="key=v1,v2,...",
                    help="preview a parameter grid (montage + table), no extraction; repeatable")
 
-    p = sub.add_parser("analysis", help="results/activity -> results/analysis (group figures + tables)")
+    p = sub.add_parser("analysis", help="an activity store -> an analysis store (group figures + tables)")
     _common(p)
-    p.add_argument("--force", action="store_true", help="rebuild even if outputs exist")
+    p.add_argument("--force", action="store_true",
+                   help="rebuild even if the outputs are current")
 
     p = sub.add_parser("train_spatial", help="train the segmenter")
     _common(p)
     p.add_argument("--synthetic", action="store_true", help="self-test on synthetic data")
+
+    p = sub.add_parser("status", help="which stages are current, for which recordings")
+    _common(p)
 
     p = sub.add_parser("models", help="list trained models, or put one into service")
     _common(p)
@@ -191,6 +322,8 @@ def main(argv=None) -> int:
     elif a.stage == "train_spatial":
         from orcann.pipeline import run_train_spatial
         ok = run_train_spatial.run(cfg, synthetic=a.synthetic)
+    elif a.stage == "status":
+        ok = _status(cfg)
     elif a.stage == "models":
         ok = _models(cfg, a.promote)
     elif a.stage == "analysis":

@@ -16,12 +16,22 @@ The pipeline runs as discrete, restartable stages that hand off on disk:
 
 ```
 data/raw/<rec>.nd2 (.tif/.npy)
-  -> motion_correction  (caiman env)          -> data/pre_processed/<rec>_mc.tif
-  -> infer              (torch env, GPU)       -> results/infer/<rec>/      cached probability map
-  -> segment            (torch env, CPU)       -> results/spatial/<rec>/    labels, centroids, traces
-  -> activity           (caiman env, CPU)      -> results/activity/<rec>/   dF/F0, spikes, footprints, gallery
-  -> analysis           (torch env, CPU)       -> results/analysis/         group figures + tables
+  -> motion_correction  (caiman env)     -> data/pre_processed/<store>/<rec>.tif
+  -> infer              (torch env, GPU)  -> results/infer/<store>/<rec>/     cached probability map
+  -> segment            (torch env, CPU)  -> results/spatial/<store>/<rec>/   labels, centroids, traces
+  -> activity           (caiman env, CPU) -> results/activity/<store>/<rec>/  dF/F0, spikes, footprints, gallery
+  -> analysis           (torch env, CPU)  -> results/analysis/<store>/        group figures + tables
 ```
+
+Each `<store>` is a folder named for the settings that stage ran under and the
+store it read — `mc_auto.ms20_d9474cc6`, `seg_t0.5.r3_d4bf0ec1`. Run a stage
+again with those settings unchanged and it finds its own output and skips;
+change one and it writes a new store beside the old rather than over it. Each
+`<rec>` is the recording's identity: its filename, plus a four-character tag over
+the file's shape and its first and last frames, so replacing a recording with
+different data under the same name produces a different recording rather than a
+silent overwrite. `orcann status` prints which stores this config names and what
+is already current in them, without running anything.
 
 `infer` is split from `segment` on purpose: the GPU model runs once and the
 probability map is cached, so tuning the threshold only re-runs the cheap CPU
@@ -67,12 +77,15 @@ conda-forge, never `pip install caiman`). Without caiman, set
 ## 2. Where your data goes
 
 The repo is the workspace. It ships the directory tree the pipeline reads and
-writes (each dir ships empty with a `.gitkeep`; contents stay local):
+writes; each directory ships empty apart from a `.txt` placeholder saying what
+belongs in it and which stage writes it. Contents stay local. The store folders
+under `pre_processed/` and `results/` are made by the stages themselves, so
+nothing there needs creating by hand:
 
 | Put here | What |
 |---|---|
 | `data/raw/` | your recordings to process (`.nd2` / `.tif` / `.npy`) |
-| `data/pre_processed/` | motion-corrected movies (output of `motion_correction`; or drop pre-corrected movies here and start at `infer`) |
+| `data/pre_processed/` | motion-corrected movies, one store per settings choice (output of `motion_correction`; or drop pre-corrected movies in the root itself and start at `infer`) |
 | `data/annotated/movies/`, `data/annotated/masks/` | ImageJ-annotated recordings, to **train** the spatial model |
 | `models/trained/` | training leaves models here; not in service |
 | `models/in_use/` | promoted models the pipeline runs |
@@ -168,16 +181,16 @@ then run the real `segment`.
 
 ## 6. Results
 
-Each stage writes a canonical `<results>/<recording_id>/` folder (filenames
+Each stage writes a canonical `<results>/<store>/<recording>/` folder (filenames
 defined once in `src/orcann/pipeline/inference.py` for the spatial stage):
 
 ```
-results/infer/<rec>/        prob.npy  max_projection.npy  meta.json
+infer/<store>/<rec>/        prob.npy  max_projection.npy  meta.json
                             prob_overlay.png   (gamma-stretched prob over max proj; QC)
-results/spatial/<rec>/      data/    labels.npy  centroids.npy  traces.npy
+spatial/<store>/<rec>/      data/    labels.npy  centroids.npy  traces.npy
                                      max_projection.npy  meta.json
                             figures/ overlay.png   (outlines + numbered centroids)
-results/activity/<rec>/     data/    temporal_traces.npy       (dF/F0, N x T)
+activity/<store>/<rec>/     data/    temporal_traces.npy       (dF/F0, N x T)
                                      temporal_traces_raw.npy   (raw fluorescence)
                                      traces_denoised.npy       (OASIS denoised)
                                      spike_trains.npy          (inferred spikes)
@@ -186,7 +199,7 @@ results/activity/<rec>/     data/    temporal_traces.npy       (dF/F0, N x T)
                                      max_projection.npy  mean_projection.npy
                             run_info.json   (dims, frame rate, decay time)
                             gallery.html    (interactive per-ROI viewer)
-results/analysis/           data/     analysis_results.json  (all stats: tests, p, effect sizes)
+analysis/<store>/           data/     analysis_results.json  (all stats: tests, p, effect sizes)
                                       dataset_features.csv   (per-recording feature matrix + genotype/day)
                                       selected_rois.csv      (per-ROI selection + quality)
                                       quality_gating.json    (QC decisions: motion, drift, activity)
@@ -198,11 +211,15 @@ results/analysis/           data/     analysis_results.json  (all stats: tests, 
 ```
 
 Row `i` of every per-recording array is label `i+1` in `labels` and centroid `i`
-in `centroids`; the `recording_id` is stable across stages (the `_mc` suffix from
-motion correction is normalised away).
+in `centroids`. The recording's identity is minted once, from the raw file, and
+every stage below copies it, so one folder name follows a recording the whole way
+down. The record beside the arrays — `meta.json`, `run_info.json` — is what marks
+a recording done: a job killed partway leaves arrays no later run will read.
 
-Cross-recording **group analysis** reads every `results/activity/<rec>/` and writes
-`results/analysis/`. It is a single aggregate job (not a per-recording array):
+Cross-recording **group analysis** reads one activity store and writes an
+analysis store. It refuses a cohort holding one acquisition twice — the same
+recording under two content tags, from a file replaced between runs — rather than
+counting one organoid as two. It is a single aggregate job (not a per-recording array):
 
 ```bash
 qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh

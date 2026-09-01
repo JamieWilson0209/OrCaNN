@@ -55,7 +55,7 @@ def recording_id(path: str) -> str:
     Handles every input the runners see:
       ``.../REC.nd2``                     -> ``REC``      (a movie)
       ``.../REC_traces.npy``              -> ``REC``      (a trace file)
-      ``.../REC_mc.tif``                  -> ``REC``      (motion-corrected movie)
+      ``.../REC_mc.tif``                  -> ``REC``      (a movie corrected elsewhere)
       ``.../REC/data/traces.npy``         -> ``REC``      (canonical contract)
       ``.../REC - Denoised/data/...npy``  -> ``REC``      (legacy layout)
 
@@ -166,12 +166,17 @@ def write_recording(out_root: str, rec_id: str, *,
                     centroids: Optional[np.ndarray] = None,
                     max_projection: Optional[np.ndarray] = None,
                     prob: Optional[np.ndarray] = None,
+                    provenance: Optional[Dict] = None,
                     source: Optional[str] = None) -> str:
     """Write ``<out_root>/<rec_id>/data/`` to the contract and return the dir.
 
     Spatial arrays (``labels``, ``centroids``, ``max_projection``, ``prob``) are
     optional: the full runner passes them, the trace-only runner omits them. The
     ROI axis of ``traces``/``rates``/``events`` is always written.
+
+    ``provenance`` carries the store this output belongs to and the store it was
+    made from. The record is written after the arrays and is what marks the
+    recording done, so a run killed partway leaves arrays no later run will read.
     """
     out = os.path.join(out_root, rec_id)
     data = os.path.join(out, DATA_DIRNAME)
@@ -200,6 +205,7 @@ def write_recording(out_root: str, rec_id: str, *,
         "n_events": int(len(events["roi"])) if events is not None else 0,
         "detection": detection,
         "models": models,
+        **(provenance or {}),
         "source": os.path.abspath(source) if source else None,
         "contract": {
             "data": sorted(os.listdir(data)),

@@ -1,8 +1,14 @@
 segment output: labels, centroids, per-ROI traces
 
-One folder per recording, results/spatial/<recording_id>/:
-  data/     labels.npy  centroids.npy  traces.npy  max_projection.npy  meta.json
-  figures/  overlay.png
+  seg_<settings>_<hash>/       e.g. seg_t0.5.r3_d4bf0ec1/
+      <recording>/   data/     labels.npy  centroids.npy  traces.npy
+                               max_projection.npy  meta.json
+                     figures/  overlay.png
+
+The store is named for the threshold and radius it ran under and for the infer
+store it read, so each set of detection parameters keeps its own output and
+re-running with them unchanged skips. `--sweep` writes its montage and table into
+the store the current settings name, without extracting.
 
 Written by: segment.   Read by: activity.
 

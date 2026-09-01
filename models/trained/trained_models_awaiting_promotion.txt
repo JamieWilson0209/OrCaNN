@@ -1,0 +1,18 @@
+models training produced, not in service
+
+  <name>_<UTC timestamp>_<4 hex>/
+      segmenter.pt        the model, with its identity and content digest inside
+      train_report.json   held-out metrics for that run, beside what it describes
+
+A finished training run writes here and stops. Nothing reads a model from this
+folder: putting one into service is a separate act, so that choosing a model
+appears in the shell history of whoever chose it.
+
+  orcann models --config config.yaml                     list what is here
+  orcann models --config config.yaml --promote <identity>   copy it into service
+
+Written by: train_spatial (train_spatial.out in config.yaml).
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

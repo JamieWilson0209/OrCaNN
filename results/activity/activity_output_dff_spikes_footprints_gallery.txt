@@ -1,10 +1,16 @@
 activity output: dF/F0, spikes, footprints, gallery
 
-One folder per recording, results/activity/<recording_id>/:
-  data/   temporal_traces.npy  temporal_traces_raw.npy  traces_denoised.npy
-          spike_trains.npy  deconv_noise.npy  spatial_footprints.npz
-          max_projection.npy  mean_projection.npy
-  run_info.json   gallery.html
+  act_<settings>_<hash>/       e.g. act_global-dff.oasis_d9aeaab3/
+      <recording>/   data/   temporal_traces.npy  temporal_traces_raw.npy
+                             traces_denoised.npy  spike_trains.npy
+                             deconv_noise.npy  spatial_footprints.npz
+                             max_projection.npy  mean_projection.npy
+                     run_info.json   gallery.html
+
+The store is named for the baseline and deconvolution settings and for the
+segment store it read. Each recording folder keeps the recording's identity,
+whose leading fields are the acquisition name, so the analysis stage's
+genotype/day parsing reads it as it always has.
 
 Written by: activity.   Read by: analysis.
 

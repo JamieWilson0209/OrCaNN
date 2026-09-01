@@ -4,14 +4,20 @@
 # repo works wherever it is extracted; an absolute path is used as-is.
 # null = unset / use the default; lists use [a, b].
 
-# Workspace layout: where recordings live and where results are written
+# Workspace layout: where recordings live and where results are written.
+# Every path below raw is a ROOT, not an output folder. Each stage writes into a
+# folder under its root named for the settings it ran under and the folder it
+# read, so changing a setting writes somewhere new instead of over the last run,
+# and running again with the settings unchanged finds the earlier output and
+# skips. `orcann status` prints which folders this config names and what is
+# already current in them.
 paths:
   raw: "data/raw"                      # recordings to process (.nd2 / .tif / .npy)
-  pre_processed: "data/pre_processed"  # motion-corrected movies (motion_correction output, infer input)
-  infer: "results/infer"               # cached probability maps (infer output, segment input)
-  spatial: "results/spatial"           # segment output: <spatial>/<recording_id>/
-  activity: "results/activity"         # activity output: <activity>/<recording_id>/ (calcium-format, analysis input)
-  analysis: "results/analysis"         # analysis stage output (group figures + tables)
+  pre_processed: "data/pre_processed"  # motion_correction output: <root>/mc_<settings>/<recording>.tif
+  infer: "results/infer"               # infer output: <root>/inf_<model>_<settings>/<recording>/
+  spatial: "results/spatial"           # segment output: <root>/seg_<settings>/<recording>/
+  activity: "results/activity"         # activity output: <root>/act_<settings>/<recording>/ (calcium-format)
+  analysis: "results/analysis"         # analysis output: <root>/ana_<settings>/
 
 # Trained segmenter used by the spatial detection stages
 models:

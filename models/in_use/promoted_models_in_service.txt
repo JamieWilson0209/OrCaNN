@@ -1,0 +1,16 @@
+promoted models the pipeline may run
+
+  <name>_<UTC timestamp>_<4 hex>/
+      segmenter.pt   the model, verified against the digest recorded inside it
+
+models.spatial in config.yaml selects one by identity, or `latest` for the newest
+by timestamp. `latest` is resolved afresh on every run and the resolved identity
+is what gets recorded, never the word itself.
+
+A model arrives here only by promotion, never by finishing a training run.
+
+Read by: infer.   Written by: orcann models --promote.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

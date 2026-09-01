@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Motion correction (CaImAn NoRMCorre), ONE recording per array task, in the
-# CAIMAN env: data/raw -> data/pre_processed (<stem>_mc.tif). Submit as an array:
+# CAIMAN env: data/raw -> data/pre_processed/<store>/<identity>.tif. Submit as an array:
 #   bash hpc/submit.sh motion_correct [config.yaml]
 # (counts raw recordings and runs qsub -t 1-N; N=1 is a single recording).
 # NoRMCorre memmaps go to job-local $TMPDIR, so scratch quota is untouched.
