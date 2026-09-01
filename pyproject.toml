@@ -33,3 +33,7 @@ torch = ["torch>=2.1"]
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["orcann*"]
+
+[tool.setuptools.package-data]
+# The gallery page: shell, style and behaviour, with one recording substituted in.
+orcann = ["activity/*.html"]

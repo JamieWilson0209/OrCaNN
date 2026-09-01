@@ -11,10 +11,11 @@ same gallery renders over segmenter output with no changes to it:
   - ``build_projections``  movie  -> max / mean / std / correlation images
   - ``footprints_from_labels`` labels -> sparse (d1*d2, N) footprints for analysis
 
-Every derived quantity is read straight off the label geometry (region area,
-boundary, edge contact), so nothing is invented: contour polygons are the true
-label outlines, and ``contour_success`` is True for every ROI because the
-outline is exact rather than fitted. Row ``i`` of every array is label ``i+1``,
+Every derived quantity is read straight off the label geometry (region area and
+boundary), so nothing is invented: contour polygons are the true label outlines,
+and ``contour_success`` is False only where a region yields no boundary at all,
+never because an outline was fitted rather than measured. Row ``i`` of every
+array is label ``i+1``,
 matching ``inference.write_recording``'s ROI axis so ids line up across stages.
 """
 from __future__ import annotations
@@ -28,14 +29,13 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-# --- one ROI's derived geometry (the gallery reads .contour/.circularity/.solidity)
+# --- one ROI's derived geometry (the gallery reads .contour and .circularity)
 
 
 @dataclass
 class _Contour:
     contour: np.ndarray          # (K, 2) boundary points as (x, y) = (col, row)
     circularity: float
-    solidity: float
 
 
 @dataclass
@@ -51,9 +51,7 @@ class SeedView:
     centers: np.ndarray                      # (N, 2) float (row, col)
     radii: np.ndarray                        # (N,) float, equivalent-area radius
     intensities: np.ndarray                  # (N,) float, mean projection value in ROI
-    contour_success: np.ndarray              # (N,) bool, always True here (exact outlines)
-    boundary_touching: np.ndarray            # (N,) bool, ROI touches the frame edge
-    source_projection: List[str]             # (N,) provenance label, "segmenter"
+    contour_success: np.ndarray              # (N,) bool, False only if the outline failed
     contours: List[Optional[_Contour]] = field(default_factory=list)
 
 
@@ -83,7 +81,7 @@ def build_seed_view(labels: np.ndarray,
 
     ``max_projection`` (if given) supplies the per-ROI intensity readout;
     ``centroids`` (if given) is used verbatim, else centres are recomputed from
-    the labels. Circularity/solidity come from region props; the radius is the
+    the labels. Circularity comes from region props; the radius is the
     equivalent-area radius ``sqrt(area / pi)``.
     """
     from skimage import measure
@@ -91,14 +89,12 @@ def build_seed_view(labels: np.ndarray,
     ids = np.unique(labels)
     ids = ids[ids != 0]
     n = len(ids)
-    H, W = labels.shape
     mp = None if max_projection is None else np.asarray(max_projection, float)
 
     centers = np.zeros((n, 2), np.float32)
     radii = np.zeros(n, np.float32)
     intens = np.zeros(n, np.float32)
     success = np.ones(n, bool)
-    edge = np.zeros(n, bool)
     contours: List[Optional[_Contour]] = []
 
     if centroids is not None and len(centroids) != len(ids):
@@ -122,25 +118,19 @@ def build_seed_view(labels: np.ndarray,
         area = float(m.sum())
         radii[i] = float(np.sqrt(area / np.pi)) if area > 0 else 0.0
         intens[i] = float(mp[m].mean()) if mp is not None else 0.0
-        edge[i] = bool(ys.min() == 0 or xs.min() == 0 or ys.max() == H - 1 or xs.max() == W - 1)
 
         p = props.get(int(k))
         perim = float(getattr(p, "perimeter", 0.0)) if p is not None else 0.0
         circ = float(4.0 * np.pi * area / (perim ** 2)) if perim > 0 else 0.0
         circ = min(circ, 1.0)
-        conv = 0.0
-        if p is not None:
-            conv = float(getattr(p, "area_convex", None) or getattr(p, "convex_area", 0.0))
-        sol = float(area / conv) if conv > 0 else 1.0
         poly = _region_contour(m)
-        contours.append(_Contour(poly, circ, sol) if poly is not None else None)
+        contours.append(_Contour(poly, circ) if poly is not None else None)
         if poly is None:
             success[i] = False
 
     return SeedView(
         n_seeds=n, centers=centers, radii=radii, intensities=intens,
-        contour_success=success, boundary_touching=edge,
-        source_projection=["segmenter"] * n, contours=contours,
+        contour_success=success, contours=contours,
     )
 
 

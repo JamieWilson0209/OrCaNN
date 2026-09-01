@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f7f9fb;  --panel: #fff;  --rail: #fbfcfd;  --input: #fbfcfe;
+  --line: #e2e9f1;  --line-soft: #eef3f8;  --line-mid: #e9eff6;  --border: #c9d6e4;
+  --ink: #1c2b3a;  --ink-2: #2c415a;  --ink-3: #4a5f78;
+  --mute: #5b7391;  --mute-2: #7189a3;  --mute-3: #8fa4ba;  --ghost: #b7c7d8;
+  --accent: #1e5fbf;  --accent-soft: #e9f1fc;  --accent-tint: #f0f6ff;  --accent-line: #9db9dd;
+  --ok: #2e8552;  --ok-bg: #e7f3ec;
+  --canvas: #0b1220;  --dark: #20303f;
+  --ctrl: #4472C4;  --ctrl-mute: #c4d0dc;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans); background: var(--bg); color: var(--ink);
+  font-size: 12.5px; height: 100vh; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+/* --- top bar --- */
+.topbar {
+  height: 44px; flex: 0 0 auto; background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 9px; padding: 0 18px;
+}
+.brand { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.crumb { color: var(--ghost); }
+.where { font-size: 13px; color: var(--ink-3); }
+.rec { font-family: var(--mono); font-size: 12.5px; color: var(--mute-3); }
+
+.panes { flex: 1; display: flex; min-height: 0; }
+
+/* --- rails --- */
+.rail {
+  background: var(--panel); padding: 18px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 16px; flex: 0 0 auto;
+}
+.rail-l { width: 260px; border-right: 1px solid var(--line); }
+.rail-r { width: 340px; border-left: 1px solid var(--line); gap: 14px; }
+.group { display: flex; flex-direction: column; gap: 8px; }
+.eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.09em;
+  color: var(--mute-2); text-transform: uppercase;
+}
+.rule { height: 1px; background: var(--line-mid); }
+
+/* --- background layers --- */
+.layers { display: flex; flex-direction: column; gap: 2px; }
+.layer {
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.layer:hover { background: var(--rail); }
+.layer.on { background: var(--accent-tint); border-color: var(--accent-line); }
+.layer .name { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.layer.on .name { color: var(--accent); }
+.layer .desc { font-size: 11px; color: var(--mute-3); margin-top: 1px; line-height: 1.35; }
+
+/* --- toggles --- */
+.toggle {
+  display: flex; align-items: center; gap: 9px; padding: 6px 2px;
+  cursor: pointer; font-size: 12.5px; color: var(--ink-3);
+}
+.box {
+  width: 15px; height: 15px; border-radius: 4px; flex: 0 0 auto;
+  border: 1.5px solid var(--ghost); background: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 10px; font-weight: 700;
+}
+.toggle.on .box { border-color: var(--accent); background: var(--accent); }
+
+/* --- filter --- */
+.slider-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
+.slider-row b { font-family: var(--mono); font-weight: 400; color: var(--accent); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+
+/* --- statistics --- */
+.stats {
+  background: var(--rail); border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+}
+.stats div { display: flex; justify-content: space-between; }
+.stats span:first-child { color: var(--mute-2); }
+.stats span:last-child { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+.note { font-size: 11.5px; color: var(--mute-3); line-height: 1.45; }
+
+/* --- stage --- */
+.stage { flex: 1; position: relative; background: var(--canvas); min-width: 0; }
+.vp { position: absolute; inset: 0; overflow: hidden; cursor: grab; }
+.vp.drag { cursor: grabbing; }
+.vp.over { cursor: pointer; }
+.plate { position: absolute; }
+.plate img, .plate canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+}
+.plate img { image-rendering: pixelated; }
+.chip {
+  position: absolute; top: 12px; left: 12px; font-family: var(--mono);
+  background: rgba(32,48,63,0.82); color: #cfe0f0;
+  font-size: 11.5px; padding: 4px 10px; border-radius: 6px;
+}
+.zoombar {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 6px; align-items: center; padding: 6px; border-radius: 10px;
+  background: rgba(255,255,255,0.94); border: 1px solid #d4dee9;
+  box-shadow: 0 4px 14px rgba(28,58,94,0.18);
+}
+.zbtn {
+  min-width: 30px; height: 30px; padding: 0 8px; border-radius: 7px;
+  background: #fff; border: 1px solid #d4dee9; color: var(--ink-3);
+  font-family: var(--sans); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.zbtn:hover { border-color: var(--accent-line); color: var(--accent); }
+#zpct {
+  min-width: 46px; text-align: center; font-family: var(--mono);
+  font-size: 12.5px; color: var(--ink-3);
+}
+.tip {
+  position: fixed; display: none; z-index: 20; pointer-events: none;
+  background: var(--dark); color: #e8f0f7; border-radius: 7px;
+  padding: 6px 10px; font-size: 12px; line-height: 1.5;
+  box-shadow: 0 6px 20px rgba(20,30,40,0.35);
+}
+.tip b { font-family: var(--mono); color: #7fa8e3; }
+
+/* --- selected cell --- */
+.sel-head { display: flex; align-items: center; justify-content: space-between; }
+.sel-id { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--accent); }
+.pill { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 20px; }
+.pill.on { color: var(--ok); background: var(--ok-bg); }
+.pill.off { color: var(--mute); background: #eef2f6; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tile {
+  background: var(--rail); border: 1px solid var(--line-soft);
+  border-radius: 7px; padding: 9px 11px;
+}
+.tile .k { font-size: 11px; color: var(--mute-3); }
+.tile .v { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 2px; }
+.card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.card-head {
+  padding: 8px 12px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; font-weight: 600; color: var(--ink-2);
+}
+.legend { margin-left: auto; display: flex; gap: 10px; font-size: 10.5px; font-weight: 400; color: var(--mute-2); }
+.swatch { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 4px; background: var(--accent); }
+.swatch.ev { width: 2px; height: 9px; background: #e0863f; }
+#trace { width: 100%; height: 110px; display: block; }
+.empty { padding: 44px 20px; text-align: center; color: var(--mute-3); }
+.empty .t { font-size: 13px; font-weight: 600; color: var(--mute); }
+.empty .s { font-size: 12.5px; margin-top: 6px; line-height: 1.5; }
+
+/* --- cell list --- */
+.sorts { display: flex; gap: 5px; }
+.sort {
+  flex: 1; text-align: center; font-size: 11.5px; font-weight: 600;
+  padding: 5px 6px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--border); background: #fff; color: var(--ink-3);
+  font-family: var(--sans);
+}
+.sort.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+#search {
+  width: 100%; padding: 8px 10px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--input);
+  font-family: var(--mono); font-size: 12.5px; color: var(--ink); outline: none;
+}
+#search:focus { border-color: var(--accent); }
+#search::placeholder { color: var(--mute-3); }
+.list {
+  display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto; padding-right: 8px; scrollbar-gutter: stable;
+  min-height: 0; max-height: 320px;
+}
+.row {
+  display: flex; align-items: center; gap: 9px; padding: 7px 11px;
+  border-radius: 7px; cursor: pointer; background: #fff;
+  border: 1px solid var(--line-soft);
+}
+.row:hover { border-color: var(--accent-line); }
+.row.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ctrl-mute); }
+.dot.on { background: var(--ctrl); }
+.rid { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.bar { flex: 1; height: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; min-width: 30px; }
+.bar i { display: block; height: 100%; background: var(--ctrl-mute); }
+.bar i.on { background: var(--ctrl); }
+.rval {
+  font-family: var(--mono); font-size: 11.5px; color: var(--mute-2);
+  width: 56px; text-align: right;
+}
+.blocked { padding: 60px 40px; text-align: center; color: var(--mute); line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <span class="brand">OrCaNN</span><span class="crumb">›</span>
+    <span class="where">ROI viewer</span>
+    <span class="crumb">·</span><span class="rec" id="rec"></span>
+  </div>
+  <div class="panes">
+    <div class="rail rail-l">
+      <div class="group">
+        <div class="eyebrow">Background</div>
+        <div class="layers" id="layers"></div>
+      </div>
+      <div class="rule"></div>
+      <div class="group" style="gap:2px">
+        <div class="eyebrow">Overlays</div>
+        <div class="toggle on" data-flag="outlines"><span class="box">✓</span><span>Cell outlines</span></div>
+        <div class="toggle" data-flag="labels"><span class="box">✓</span><span>ROI numbers</span></div>
+      </div>
+      <div class="rule"></div>
+      <div class="group">
+        <div class="eyebrow">Filter</div>
+        <div class="slider-row"><span>Min radius</span><b id="minr-v">0 px</b></div>
+        <input type="range" id="minr" min="0" max="12" step="1" value="0">
+      </div>
+      <div class="rule"></div>
+      <div class="group">
+        <div class="eyebrow">Statistics</div>
+        <div class="stats" id="stats"></div>
+        <div class="note" id="trunc" hidden></div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="vp" id="vp">
+        <div class="plate" id="plate">
+          <img id="layer" alt="">
+          <canvas id="overlay"></canvas>
+        </div>
+      </div>
+      <div class="chip" id="chip"></div>
+      <div class="zoombar">
+        <button class="zbtn" id="zout">−</button>
+        <span id="zpct">100%</span>
+        <button class="zbtn" id="zin">+</button>
+        <button class="zbtn" id="zfit">Fit</button>
+        <button class="zbtn" id="zone">1:1</button>
+      </div>
+      <div class="tip" id="tip"></div>
+    </div>
+
+    <div class="rail rail-r">
+      <div id="detail"></div>
+      <div class="rule"></div>
+      <div class="group" style="min-height:0">
+        <div class="eyebrow" id="cells-head">Cells</div>
+        <div class="sorts" id="sorts"></div>
+        <input type="text" id="search" placeholder="Search number — e.g. 42, 10-30">
+        <div class="list" id="list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("payload").textContent);
+
+const OUTLINE_ON = "#7fb2ff", OUTLINE_OFF = "#8fa4ba", OUTLINE_SEL = "#ffd24a";
+const TRACE_RAW = "#c4d0dc", TRACE_DEN = "#1e5fbf", TRACE_EV = "#e0863f";
+const ZOOM_MIN = 0.3, ZOOM_MAX = 12, SELECT_ZOOM = 4;
+
+const S = {
+  bg: D.layers.length ? D.layers[0].key : null,
+  outlines: true, labels: false, minR: 0, sel: null, search: "",
+  // Without deconvolution every rate is zero, so ordering by it would be a
+  // control that does nothing; the amplitude sort is the honest default.
+  sort: D.has_events ? "rate" : "amp",
+};
+const view = { zoom: 1, panX: 0, panY: 0 };
+let TRACES = null;                       // Int16Array over the whole recording
+
+const $ = (id) => document.getElementById(id);
+const pad3 = (n) => String(n).padStart(3, "0");
+
+/* ---------- payload ---------- */
+
+async function inflate(b64) {
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const stream = new Blob([bytes]).stream()
+    .pipeThrough(new DecompressionStream("deflate"));
+  return new Int16Array(await new Response(stream).arrayBuffer());
+}
+
+/** One ROI's stored array, rescaled. `span` is [offset, length] in int16 units. */
+function series(span, step) {
+  if (!span) return null;
+  const q = TRACES.subarray(span[0], span[0] + span[1]);
+  const out = new Float32Array(q.length);
+  for (let i = 0; i < q.length; i++) out[i] = q[i] * step;
+  return out;
+}
+
+/** Contour points, stored at twice image resolution so they are whole numbers. */
+function contour(roi) {
+  if (!roi.c) return null;
+  const q = TRACES.subarray(roi.c[0], roi.c[0] + roi.c[1]);
+  const pts = new Float32Array(q.length);
+  for (let i = 0; i < q.length; i++) pts[i] = q[i] / 2;
+  return pts;
+}
+
+/* ---------- the visible set ----------
+   Canvas, list, statistics and the arrow keys all read these two, so they
+   cannot disagree about which cells are on screen. */
+
+function visible() { return D.rois.filter((r) => r.r >= S.minR); }
+
+function listed() {
+  let out = visible();
+  const term = S.search.trim();
+  if (term) {
+    const range = term.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (range) {
+      const lo = +range[1], hi = +range[2];
+      out = out.filter((r) => r.id >= lo && r.id <= hi);
+    } else if (/^\d+$/.test(term)) {
+      out = out.filter((r) => String(r.id).startsWith(term));
+    } else {
+      const ids = new Set(term.split(/[,\s]+/).filter(Boolean).map(Number));
+      out = out.filter((r) => ids.has(r.id));
+    }
+  }
+  const by = S.sort;
+  return out.sort((a, b) =>
+    by === "rate" ? b.rate - a.rate || b.amp - a.amp :
+    by === "amp" ? b.amp - a.amp || b.rate - a.rate :
+    a.id - b.id);
+}
+
+const selected = () => D.rois.find((r) => r.id === S.sel) || null;
+
+/* ---------- canvas ---------- */
+
+const vp = $("vp"), plate = $("plate"), overlay = $("overlay"), img = $("layer");
+
+function applyTransform() {
+  const rect = vp.getBoundingClientRect();
+  const w = D.width * view.zoom, h = D.height * view.zoom;
+  // The image and the overlay are children of one positioned plate, so they
+  // are transformed together and cannot drift apart.
+  plate.style.left = (rect.width - w) / 2 + view.panX + "px";
+  plate.style.top = (rect.height - h) / 2 + view.panY + "px";
+  plate.style.width = w + "px";
+  plate.style.height = h + "px";
+
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.max(1, Math.round(w * dpr)), bh = Math.max(1, Math.round(h * dpr));
+  if (overlay.width !== bw || overlay.height !== bh) {
+    overlay.width = bw; overlay.height = bh;
+  }
+  $("zpct").textContent = Math.round(view.zoom * 100) + "%";
+  draw();
+}
+
+function draw() {
+  const ctx = overlay.getContext("2d");
+  const dpr = window.devicePixelRatio || 1, k = view.zoom * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!S.outlines && !S.labels) return;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.lineJoin = "round";
+
+  for (const roi of visible()) {
+    const isSel = roi.id === S.sel;
+    const col = isSel ? OUTLINE_SEL : (roi.rate > 0 ? OUTLINE_ON : OUTLINE_OFF);
+    const pts = contour(roi);
+
+    if (S.outlines && pts) {
+      ctx.strokeStyle = col;
+      // Divided by the zoom so the line stays hairline at any magnification.
+      ctx.lineWidth = (isSel ? 2.4 : 1.3) / view.zoom;
+      ctx.beginPath();
+      ctx.moveTo(pts[0], pts[1]);
+      for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    if (isSel) {
+      ctx.strokeStyle = "rgba(255,210,74,0.4)";
+      ctx.lineWidth = 6 / view.zoom;
+      ctx.beginPath();
+      ctx.arc(roi.cx, roi.cy, roi.r + 5, 0, 6.2832);
+      ctx.stroke();
+    }
+    if (S.labels) {
+      ctx.fillStyle = col;
+      ctx.font = (11 / view.zoom) + "px 'IBM Plex Mono', monospace";
+      ctx.fillText(roi.id, roi.cx + roi.r + 2, roi.cy - roi.r);
+    }
+  }
+}
+
+function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
+
+/** Zoom keeping the image point under (ax, ay) in client space where it is. */
+function zoomAt(z, ax, ay) {
+  const rect = vp.getBoundingClientRect(), nz = clampZoom(z);
+  const left = (rect.width - D.width * view.zoom) / 2 + view.panX;
+  const top = (rect.height - D.height * view.zoom) / 2 + view.panY;
+  const ix = (ax - rect.left - left) / view.zoom;
+  const iy = (ay - rect.top - top) / view.zoom;
+  view.panX = (ax - rect.left - ix * nz) - (rect.width - D.width * nz) / 2;
+  view.panY = (ay - rect.top - iy * nz) - (rect.height - D.height * nz) / 2;
+  view.zoom = nz;
+  applyTransform();
+}
+
+function fit() {
+  const rect = vp.getBoundingClientRect();
+  view.zoom = clampZoom(Math.min(rect.width / D.width, rect.height / D.height) * 0.92);
+  view.panX = view.panY = 0;
+  applyTransform();
+}
+
+function focusOn(roi) {
+  view.zoom = SELECT_ZOOM;
+  view.panX = (D.width / 2 - roi.cx) * view.zoom;
+  view.panY = (D.height / 2 - roi.cy) * view.zoom;
+  applyTransform();
+}
+
+/** Image coordinates of a pointer event. */
+function toImage(e) {
+  const r = plate.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / view.zoom, y: (e.clientY - r.top) / view.zoom };
+}
+
+/** The visible cell nearest the point, within 1.5 radii of its centre. */
+function hit(x, y) {
+  let best = null, bestD = Infinity;
+  for (const roi of visible()) {
+    const d = Math.hypot(x - roi.cx, y - roi.cy);
+    if (d <= Math.max(roi.r * 1.5, 3) && d < bestD) { best = roi; bestD = d; }
+  }
+  return best;
+}
+
+/* ---------- selection ---------- */
+
+function select(roi, { zoom = true } = {}) {
+  S.sel = roi ? roi.id : null;
+  if (roi && zoom) focusOn(roi); else draw();
+  renderDetail();
+  renderList();
+  const row = document.querySelector(".row.on");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+
+/* ---------- left rail ---------- */
+
+function renderLayers() {
+  $("layers").innerHTML = D.layers.map((l) => `
+    <div class="layer ${l.key === S.bg ? "on" : ""}" data-key="${l.key}">
+      <div class="name">${l.name}</div><div class="desc">${l.desc}</div>
+    </div>`).join("");
+}
+
+function renderStats() {
+  const vis = visible().length;
+  $("stats").innerHTML = [
+    ["Total cells", D.stats.total],
+    ["Active", D.has_events ? D.stats.active : "—"],
+    ["Median radius", D.stats.median_radius.toFixed(1) + " px"],
+    ["Visible now", vis],
+  ].map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join("");
+
+  if (D.stats.shown < D.stats.total) {
+    const t = $("trunc");
+    t.hidden = false;
+    t.textContent = `Showing the first ${D.stats.shown} of ${D.stats.total} cells `
+      + `(gallery.max_rois). The remainder are in the trace arrays, not here.`;
+  }
+}
+
+/* ---------- right rail ---------- */
+
+const fmtRate = (r) => D.has_events ? r.rate.toFixed(1) + "/10s" : "—";
+
+function renderDetail() {
+  const roi = selected(), el = $("detail");
+  if (!roi) {
+    el.innerHTML = `<div class="empty"><div class="t">No cell selected</div>
+      <div class="s">Click a cell outline, or pick one from the list,
+      to see its stats and calcium trace.</div></div>`;
+    return;
+  }
+  const live = roi.rate > 0;
+  const tiles = [
+    ["Event rate", fmtRate(roi)],
+    ["Peak amplitude", roi.amp.toFixed(0) + "%"],
+    ["Radius", roi.r.toFixed(1) + " px"],
+    ["Circularity", roi.circ === null ? "—" : roi.circ.toFixed(3)],
+    ["Center y,x", roi.cy.toFixed(0) + ", " + roi.cx.toFixed(0)],
+    ["Intensity", roi.intensity.toFixed(0)],
+  ];
+  const events = D.has_events
+    ? `<span><span class="swatch ev"></span>${roi.n_ev} events</span>`
+    : `<span>no deconvolution — raw ΔF/F₀</span>`;
+
+  el.innerHTML = `
+    <div class="group" style="gap:12px">
+      <div class="sel-head">
+        <div class="sel-id">ROI ${pad3(roi.id)}</div>
+        <span class="pill ${live ? "on" : "off"}">${live ? "Active" : "Inactive"}</span>
+      </div>
+      <div class="tiles">${tiles.map(([k, v]) =>
+        `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>
+      <div class="card">
+        <div class="card-head">Calcium trace
+          <div class="legend"><span><span class="swatch"></span>denoised</span>${events}</div>
+        </div>
+        <canvas id="trace"></canvas>
+      </div>
+      <div class="note">← → arrow keys step through the sorted list</div>
+    </div>`;
+  drawTrace(roi);
+}
+
+function drawTrace(roi) {
+  const cv = $("trace");
+  if (!cv) return;
+  const w = cv.offsetWidth, h = cv.offsetHeight;
+  cv.width = w * 2; cv.height = h * 2;              // 2x device pixels
+  const c = cv.getContext("2d");
+  c.setTransform(2, 0, 0, 2, 0, 0);
+  c.fillStyle = "#fff"; c.fillRect(0, 0, w, h);
+
+  const raw = series(roi.t, roi.step), den = series(roi.d, roi.step);
+  if (!raw || !raw.length) return;
+
+  let lo = Infinity, hi = -Infinity;
+  for (const v of raw) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (den) for (const v of den) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = (hi - lo) || 1;
+  const yOf = (v) => h - 6 - ((v - lo) / span) * (h - 22);
+  const xOf = (i, n) => 4 + (n > 1 ? i / (n - 1) : 0.5) * (w - 8);
+
+  c.strokeStyle = "#eef3f8"; c.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const y = 6 + (h - 22) * i / 3;
+    c.beginPath(); c.moveTo(4, y); c.lineTo(w - 4, y); c.stroke();
+  }
+  const line = (data, colour, width) => {
+    c.strokeStyle = colour; c.lineWidth = width; c.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = xOf(i, data.length), y = yOf(data[i]);
+      i ? c.lineTo(x, y) : c.moveTo(x, y);
+    }
+    c.stroke();
+  };
+  line(raw, TRACE_RAW, 1);
+  if (den) line(den, TRACE_DEN, 1.6);
+
+  // Event ticks sit on the recording's own time axis, so they stay aligned
+  // whatever number of samples the trace was stored at.
+  c.fillStyle = TRACE_EV;
+  for (const f of roi.ev) {
+    c.fillRect(xOf(f, D.n_frames) - 1, h - 6, 2, 4);
+  }
+  c.fillStyle = "#8fa4ba"; c.font = "10px 'IBM Plex Mono', monospace";
+  c.fillText(hi.toFixed(0) + "%", 6, 13);
+  c.fillText(lo.toFixed(0) + "%", 6, h - 9);
+}
+
+function renderSorts() {
+  const opts = [["rate", "Most active"], ["amp", "Strongest"], ["id", "Number"]]
+    .filter(([k]) => D.has_events || k !== "rate");
+  $("sorts").innerHTML = opts.map(([k, label]) =>
+    `<button class="sort ${k === S.sort ? "on" : ""}" data-sort="${k}">${label}</button>`).join("");
+}
+
+function renderList() {
+  const rows = listed();
+  $("cells-head").textContent = `Cells (${rows.length})`;
+
+  // The bar is read against the cohort's largest value of whatever is being
+  // sorted on, so its length means the same thing down the whole list.
+  const key = S.sort === "amp" ? "amp" : "rate";
+  const top = Math.max(...D.rois.map((r) => r[key]), 0) || 1;
+
+  $("list").innerHTML = rows.length ? rows.map((r) => {
+    const live = r.rate > 0;
+    const value = S.sort === "amp" ? r.amp.toFixed(0) + "%" : fmtRate(r);
+    return `<div class="row ${r.id === S.sel ? "on" : ""}" data-id="${r.id}">
+      <span class="dot ${live ? "on" : ""}"></span>
+      <span class="rid">${pad3(r.id)}</span>
+      <span class="bar"><i class="${live ? "on" : ""}" style="width:${100 * r[key] / top}%"></i></span>
+      <span class="rval">${live || S.sort === "amp" ? value : "—"}</span>
+    </div>`;
+  }).join("") : `<div class="note" style="padding:10px;text-align:center">No matching cells</div>`;
+}
+
+/* ---------- events ---------- */
+
+$("layers").addEventListener("click", (e) => {
+  const el = e.target.closest(".layer");
+  if (!el) return;
+  S.bg = el.dataset.key;                 // zoom, pan and selection are untouched
+  renderLayers();
+  showLayer();
+});
+
+document.querySelectorAll(".toggle").forEach((el) => {
+  el.addEventListener("click", () => {
+    S[el.dataset.flag] = !S[el.dataset.flag];
+    el.classList.toggle("on", S[el.dataset.flag]);
+    draw();
+  });
+});
+
+$("minr").addEventListener("input", (e) => {
+  S.minR = +e.target.value;
+  $("minr-v").textContent = S.minR + " px";
+  // A cell filtered out cannot stay selected, or the rails would describe a
+  // cell the canvas and the list no longer contain.
+  if (S.sel !== null && !visible().some((r) => r.id === S.sel)) S.sel = null;
+  renderStats(); renderList(); renderDetail(); draw();
+});
+
+$("search").addEventListener("input", (e) => { S.search = e.target.value; renderList(); });
+
+$("sorts").addEventListener("click", (e) => {
+  const el = e.target.closest(".sort");
+  if (!el) return;
+  S.sort = el.dataset.sort;
+  renderSorts(); renderList();
+});
+
+$("list").addEventListener("click", (e) => {
+  const el = e.target.closest(".row");
+  if (el) select(D.rois.find((r) => r.id === +el.dataset.id));
+});
+
+let drag = null;
+vp.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  drag = { x: e.clientX - view.panX, y: e.clientY - view.panY };
+  vp.classList.add("drag");
+});
+window.addEventListener("mouseup", () => { drag = null; vp.classList.remove("drag"); });
+
+vp.addEventListener("mousemove", (e) => {
+  if (drag) {
+    view.panX = e.clientX - drag.x;
+    view.panY = e.clientY - drag.y;
+    applyTransform();
+    return;
+  }
+  const p = toImage(e), roi = hit(p.x, p.y), tip = $("tip");
+  vp.classList.toggle("over", !!roi);
+  if (!roi) { tip.style.display = "none"; return; }
+  tip.style.display = "block";
+  tip.style.left = (e.clientX + 14) + "px";
+  tip.style.top = (e.clientY + 14) + "px";
+  tip.innerHTML = `<b>ROI ${pad3(roi.id)}</b><br>r ${roi.r.toFixed(1)}px · ` +
+    (roi.rate > 0 ? `${roi.rate.toFixed(1)}/10s · amp ${roi.amp.toFixed(0)}%`
+                  : (D.has_events ? "inactive" : `amp ${roi.amp.toFixed(0)}%`));
+});
+
+vp.addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
+
+vp.addEventListener("click", (e) => {
+  const p = toImage(e), roi = hit(p.x, p.y);
+  if (roi) select(roi);
+});
+
+vp.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  zoomAt(view.zoom * (e.deltaY > 0 ? 1 / 1.1 : 1.1), e.clientX, e.clientY);
+}, { passive: false });
+
+$("zin").addEventListener("click", () => zoomCentre(view.zoom * 1.3));
+$("zout").addEventListener("click", () => zoomCentre(view.zoom / 1.3));
+$("zfit").addEventListener("click", fit);
+$("zone").addEventListener("click", () => {
+  view.zoom = 1; view.panX = view.panY = 0; applyTransform();
+});
+
+function zoomCentre(z) {
+  const r = vp.getBoundingClientRect();
+  zoomAt(z, r.left + r.width / 2, r.top + r.height / 2);
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.target === $("search")) return;
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+  const rows = listed();
+  if (!rows.length) return;
+  const at = rows.findIndex((r) => r.id === S.sel);
+  const step = e.key === "ArrowRight" ? 1 : -1;
+  select(rows[at < 0 ? 0 : (at + step + rows.length) % rows.length]);
+  e.preventDefault();
+});
+
+let fitted = false;
+window.addEventListener("resize", () => { fitted ? applyTransform() : fit(); });
+
+/* ---------- start ---------- */
+
+function showLayer() {
+  const layer = D.layers.find((l) => l.key === S.bg);
+  if (!layer) return;
+  img.src = layer.src;
+  $("chip").textContent = `${layer.key} · ${D.width}×${D.height}`;
+}
+
+async function start() {
+  if (typeof DecompressionStream === "undefined") {
+    // Say so rather than rendering a viewer with no traces in it.
+    document.querySelector(".panes").innerHTML =
+      `<div class="blocked">This gallery stores its traces as a compressed
+       stream and needs a browser with <b>DecompressionStream</b> —
+       Chrome 80+, Safari 16.4+ or Firefox 113+.</div>`;
+    return;
+  }
+  $("rec").textContent = D.title;
+  TRACES = D.blob ? await inflate(D.blob) : new Int16Array(0);
+  renderLayers(); showLayer(); renderStats(); renderSorts(); renderList(); renderDetail();
+  fit();
+  fitted = true;
+}
+
+start();
+</script>
+</body>
+</html>

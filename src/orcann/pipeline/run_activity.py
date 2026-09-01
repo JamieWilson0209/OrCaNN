@@ -211,7 +211,7 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
 
 
 def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
-                     c_dff, c_raw, denoised, spikes):
+                     c_dff, denoised, spikes):
     """Interactive HTML gallery for one recording."""
     g = cfg.gallery
     if not g.interactive:
@@ -227,11 +227,10 @@ def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
         generate_interactive_gallery(
             seeds, projections, movie,
             output_path=os.path.join(out_dir, "gallery.html"),
-            title=f"{rec_id} - ROI Gallery", max_rois=g.max_rois,
-            movie_processed=movie,
+            frame_rate=cfg.imaging.frame_rate,
+            title=rec_id, max_rois=g.max_rois,
             traces_denoised=denoised, spike_trains=spikes,
-            pipeline_traces_dff=c_dff, pipeline_traces_raw=c_raw)
-        logger.info("  gallery.html written")
+            pipeline_traces_dff=c_dff)
     except Exception as e:                       # a gallery failure must not lose data
         logger.warning(f"  interactive gallery failed: {e}")
 
@@ -300,7 +299,7 @@ def run(cfg, task_id=None, force=False):
                        provenance={"upstream_store": chain.segment,
                                    "stage_version": prov.ACTIVITY_VERSION})
         _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
-                         c_dff, c_raw, denoised, spikes)
+                         c_dff, denoised, spikes)
 
         n_spk = int((spikes > 0).sum()) if spikes is not None else 0
         print(f"{rec_id:32s} {int(c_dff.shape[0]):6d} cells  {n_spk:8d} spikes")
