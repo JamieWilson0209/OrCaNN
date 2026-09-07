@@ -2,7 +2,8 @@
 
 Reads the train_spatial section of the config (movies, masks, out, report, and
 the training knobs). Masks are instance-label .npy (from rasterize_rois) or ImageJ
-ROI sets, paired to movies by filename stem. Use synthetic=True for a self-test.
+ROI sets, paired to movies by an exactly equal filename stem: blind_0001.tif
+pairs with blind_0001.zip and with nothing else. Use synthetic=True for a self-test.
 """
 import glob
 import os
@@ -16,16 +17,50 @@ from orcann.pipeline.model_io import save_trained_model
 
 
 def find_pairs(movies_dir, masks_dir):
-    pairs = {}
-    for m in glob.glob(os.path.join(movies_dir, "*.tif")) + \
-             glob.glob(os.path.join(movies_dir, "*.tiff")):
-        pairs.setdefault(os.path.splitext(os.path.basename(m))[0], [None, None])[0] = m
-    for a in glob.glob(os.path.join(masks_dir, "*.npy")) + \
-             glob.glob(os.path.join(masks_dir, "*.zip")):
-        st = os.path.splitext(os.path.basename(a))[0]
-        if st in pairs:
-            pairs[st][1] = a
-    return [(v[0], v[1]) for v in pairs.values() if v[0] and v[1]]
+    """Movies and masks sharing a filename stem, as (movie, mask) paths.
+
+    The stems must be equal character for character: the mask for blind_0001.tif
+    is blind_0001.npy or blind_0001.zip. A decorated name -- blind_0001_allroi.zip,
+    the form ImageJ writes a saved ROI set under -- is a different stem and pairs
+    with nothing, so rename it or run rasterize_rois, which names its output after
+    the movie it matched.
+    """
+    movies = _stems(movies_dir, ("*.tif", "*.tiff"))
+    masks = _stems(masks_dir, ("*.npy", "*.zip"))
+    # sorted, so the seeded shuffle below splits train/val the same way on any
+    # machine; glob order follows the filesystem
+    return [(movies[s], masks[s]) for s in sorted(movies.keys() & masks.keys())]
+
+
+def _stems(dirpath, patterns):
+    """Filename stem -> path, for every file in dirpath matching patterns."""
+    found = {}
+    for pat in patterns:
+        for p in glob.glob(os.path.join(dirpath, pat)):
+            found[os.path.splitext(os.path.basename(p))[0]] = p
+    return found
+
+
+def _unpaired_message(movies_dir, masks_dir):
+    """What to say when the directories hold files but share no stem. The cause
+    is usually a suffix on the mask names, which pairing does not strip, so the
+    message shows a name from each side rather than only the counts."""
+    movies = sorted(_stems(movies_dir, ("*.tif", "*.tiff")))
+    masks = sorted(_stems(masks_dir, ("*.npy", "*.zip")))
+    lines = [f"no movie/mask pairs: {len(movies)} movie(s) in {movies_dir}, "
+             f"{len(masks)} mask(s) in {masks_dir}, no stem in common."]
+    if not movies:
+        lines.append(f"  {movies_dir} holds no .tif/.tiff")
+    elif not masks:
+        lines.append(f"  {masks_dir} holds no .npy/.zip")
+    else:
+        lines.append(f"  a movie stem: {movies[0]}")
+        lines.append(f"  a mask stem:  {masks[0]}")
+        lines.append("A mask pairs only with the movie whose stem it equals "
+                     "exactly. Rename the masks to match, or run "
+                     "orcann.spatial.training.rasterize_rois, which names its "
+                     "output after the movie it matched.")
+    return "\n".join(lines)
 
 
 def run(cfg, synthetic=False):
@@ -47,7 +82,7 @@ def run(cfg, synthetic=False):
                 raise SystemExit(f"set train_spatial.{k} in the config (or run --synthetic)")
         pairs = find_pairs(t.movies, t.masks)
         if not pairs:
-            print("no movie/mask pairs found"); return
+            raise SystemExit(_unpaired_message(t.movies, t.masks))
         loader = load_seg_recording
         if t.min_cell_area > 0:
             from functools import partial

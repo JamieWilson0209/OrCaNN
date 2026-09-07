@@ -81,7 +81,8 @@ gallery:
 # train_spatial - fit the segmenter
 train_spatial:
   movies: "data/annotated/movies"              # dir of training movies (<stem>.tif)
-  masks: "data/annotated/masks"                # dir of instance-label masks (<stem>.npy) or ImageJ ROI sets
+  masks: "data/annotated/masks"                # dir of instance-label masks (<stem>.npy) or ImageJ ROI sets (<stem>.zip)
+                                               # <stem> must equal the movie's exactly; a decorated name pairs with nothing
   name: "segmenter"                            # name component of the trained model's identity
   out: "models/trained"                        # where training leaves models; promote from here
   checkpoint: "models/trained/_in_progress.pt" # per-epoch scratch, overwritten, never selectable

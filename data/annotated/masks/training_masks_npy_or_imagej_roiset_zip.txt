@@ -4,6 +4,11 @@ Pairs with the same-stem movie in ../movies/:
   <stem>.npy     integer instance-label image
   <stem>.zip     ImageJ RoiSet.zip
 
+<stem> must equal the movie's exactly. ImageJ saves a set under a decorated name
+(blind_0001_allroi.zip); that is a different stem and pairs with nothing, so
+rename it to blind_0001.zip, or run rasterize_rois, which names its output after
+the movie it matched.
+
 Read by: train_spatial.
 
 This folder ships empty to preserve the directory structure so the tree survives a browser

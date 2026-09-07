@@ -11,7 +11,8 @@ traced on the downscaled projection (~512 frame). If your movies are at a
 different resolution, pass --movies (or --target-dim) and the vector ROIs are
 scaled to the movie grid BEFORE rasterising, so labels and movie align.
 
-    python scripts/rasterize_rois.py --rois ROIs --out masks --src-dim 512 \
+    python -m orcann.spatial.training.rasterize_rois --rois ROIs --out masks \
+        --src-dim 512 \
         --movies movies --check qc
 """
 import argparse, glob, os
