@@ -71,6 +71,14 @@ def run(cfg, synthetic=False):
     radii = tuple(float(x) for x in t.radii)
     if not radii:
         raise SystemExit("train_spatial.radii is empty")
+    if t.n_patch < 1:
+        raise SystemExit(f"train_spatial.n_patch is {t.n_patch}; it must be at least 1")
+    if not 0.0 <= t.fg_frac <= 1.0:
+        raise SystemExit(f"train_spatial.fg_frac is {t.fg_frac}; it is a fraction, 0 to 1")
+    if t.n_energy_frames is not None and t.n_energy_frames < 1:
+        raise SystemExit(
+            f"train_spatial.n_energy_frames is {t.n_energy_frames}; it must be at "
+            "least 1, or null to pool every frame")
     print(f"LoG bank: {len(radii)} scale(s) -> radii_px={list(radii)}")
 
     rng = np.random.default_rng(0)
@@ -107,7 +115,9 @@ def run(cfg, synthetic=False):
     # any epoch left an under-trained model in service with the previous one
     # already gone.
     model = train_segmenter(train, channels=channels, radii_px=radii,
-                            patch=t.patch, epochs=t.epochs, loader=loader,
+                            patch=t.patch, n_patch=t.n_patch, fg_frac=t.fg_frac,
+                            n_energy_frames=t.n_energy_frames,
+                            epochs=t.epochs, loader=loader,
                             pixel_um=t.pixel_um,
                             checkpoint_path=t.checkpoint or None)
 

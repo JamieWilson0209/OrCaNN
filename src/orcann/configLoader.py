@@ -128,6 +128,12 @@ class TrainSpatialParams:
     min_cell_area: int = 0
     pixel_um: Optional[float] = None
     patch: int = 128
+    # Sampling. How much of each recording one epoch sees; the defaults bound
+    # compute rather than express anything measured about the data, and
+    # n_energy_frames is stamped into the checkpoint and reused by infer.
+    n_patch: int = 6
+    fg_frac: float = 0.75
+    n_energy_frames: Optional[int] = 64
     epochs: int = 30
     val_frac: float = 0.2
     holdout: bool = True
@@ -276,9 +282,10 @@ class Config:
         sub = getattr(self, section, None)
         if not is_dataclass(sub):
             raise KeyError(f"unknown config section: {section!r}")
-        if key not in {f.name for f in fields(sub)}:
+        fld = next((f for f in fields(sub) if f.name == key), None)
+        if fld is None:
             raise KeyError(f"unknown config key: {section}.{key}")
-        setattr(sub, key, _coerce(value, getattr(sub, key)))
+        setattr(sub, key, _coerce(value, getattr(sub, key), _accepts_none(fld)))
 
     def _to_commented_yaml(self) -> str:
         lines = [
@@ -303,9 +310,22 @@ class Config:
         return "\n".join(lines) + "\n"
 
 
-def _coerce(value: Any, current: Any) -> Any:
+def _accepts_none(fld) -> bool:
+    """Whether a field's annotation admits None. Read as text, because a module
+    may have its annotations stringified, and because the answer is only used to
+    decide whether `--set key=null` clears the field or is a type error."""
+    return "Optional[" in str(fld.type) or "None" in str(fld.type)
+
+
+def _coerce(value: Any, current: Any, accepts_none: bool = True) -> Any:
     """Cast a YAML/string value to the type of the field's current value."""
     if value is None:                                    # YAML null -> None
+        return None
+    if accepts_none and isinstance(value, str) \
+            and value.strip().lower() in ("none", "null"):
+        # Reached before the casts below, so `--set n_energy_frames=null` clears
+        # an optional number instead of failing int(); a field that may not be
+        # null still gets the cast, and its type error.
         return None
     if isinstance(current, tuple):
         parts = ([p for p in re.split(r"[,:\s]+", value.strip()) if p]
@@ -397,7 +417,7 @@ _FIELD_DOC = {
     "gallery.interactive": "per-recording interactive HTML gallery (gallery.html)",
     "gallery.max_rois": "cap the number of ROIs drawn in the gallery",
     "train_spatial.movies": "dir of training movies (<stem>.tif)",
-    "train_spatial.masks": "dir of instance-label masks (<stem>.npy) or ImageJ ROI sets",
+    "train_spatial.masks": "dir of masks (<stem>.npy) or ImageJ ROI sets (<stem>.zip); <stem> must equal the movie's exactly",
     "train_spatial.out": "output dir for the trained segmenter.pt",
     "train_spatial.name": "name component of the trained model's identity",
     "train_spatial.checkpoint": "per-epoch checkpoint, overwritten; scratch, not selectable",
@@ -405,7 +425,10 @@ _FIELD_DOC = {
     "train_spatial.radii": "LoG scale bank, cell radii in px",
     "train_spatial.min_cell_area": "strip ROIs smaller than this from training masks (0 = keep all)",
     "train_spatial.pixel_um": "training movies' um/px, recorded in the model (null if unknown)",
-    "train_spatial.patch": "training patch size in px",
+    "train_spatial.patch": "training patch size in px (must be smaller than the frame)",
+    "train_spatial.n_patch": "patches sampled per recording per epoch -- advanced, change only with a measured reason",
+    "train_spatial.fg_frac": "fraction of those centred on an annotated cell -- advanced, change only with a measured reason",
+    "train_spatial.n_energy_frames": "frames pooled per forward pass, null = every frame; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.epochs": "training epochs",
     "train_spatial.val_frac": "fraction of recordings held out for validation",
     "train_spatial.holdout": "hold out val_frac to evaluate; false = train final model on all data",

@@ -90,7 +90,14 @@ train_spatial:
   radii: [3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0]  # LoG scale bank, cell radii in px
   min_cell_area: 0                             # strip ROIs smaller than this from training masks (0 = keep all)
   pixel_um: null                               # training movies' um/px, recorded in the model (null if unknown)
-  patch: 128                                   # training patch size in px
+  patch: 128                                   # training patch size in px (must be smaller than the frame)
+  # Sampling - how much of each recording one epoch actually sees. These defaults
+  # bound compute; they are not a measured property of the data. n_energy_frames
+  # is stamped into the checkpoint and reused by infer, so a change here follows
+  # the model downstream. Change them only with a reason you can measure.
+  n_patch: 6                                   # patches sampled per recording per epoch
+  fg_frac: 0.75                                # fraction of those centred on an annotated cell
+  n_energy_frames: 64                          # frames pooled per forward pass (null = every frame)
   epochs: 30                                   # training epochs
   val_frac: 0.2                                # fraction of recordings held out for validation
   holdout: true                                # hold out val_frac to evaluate; false = train final model on all data

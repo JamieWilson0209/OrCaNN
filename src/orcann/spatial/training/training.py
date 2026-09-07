@@ -106,8 +106,9 @@ def best_iou(prob: np.ndarray, mask: np.ndarray,
 
 def train_segmenter(sources, channels: Dict[str, bool],
                     radii_px=(4, 6, 9, 13, 18), patch: int = 128, n_patch: int = 6,
+                    fg_frac: float = 0.75,
                     epochs: int = 30, lr: float = 3e-3, hidden: int = 24,
-                    n_energy_frames: int = 64, seed: int = 0, pixel_um=None,
+                    n_energy_frames: Optional[int] = 64, seed: int = 0, pixel_um=None,
                     loader=None, checkpoint_path: Optional[str] = None,
                     device: Optional[torch.device] = None) -> SpatialSegmenter:
     rng = np.random.default_rng(seed)
@@ -128,7 +129,7 @@ def train_segmenter(sources, channels: Dict[str, bool],
         tot = 0.0; nb = 0
         for i in order:
             rec = _materialize(sources[i], loader)
-            for sub, m in _seg_patches(rec, patch, n_patch, rng):
+            for sub, m in _seg_patches(rec, patch, n_patch, rng, fg_frac=fg_frac):
                 x = torch.from_numpy(sub.astype(np.float32)).to(device)[None]
                 y = torch.from_numpy(m).to(device)[None, None]
                 opt.zero_grad()
