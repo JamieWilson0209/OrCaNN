@@ -4,7 +4,8 @@ Metric computation helpers for individual datasets.
 All metrics are computed from the SELECTED neurons (filtered by quality at
 load time). Data sources:
 
-  C_sel (selected_traces)     - Denoised calcium traces from OASIS
+  C_sel (selected_traces)     - OASIS-denoised traces, or raw dF/F0 when
+                                deconvolution.method is 'robust'
   S_sel (selected_spikes)     - Deconvolved spike trains from OASIS
   R_sel (selected_raw_traces) - Raw fluorescence (for QC only)
 
@@ -22,6 +23,10 @@ At 2 Hz imaging the temporal resolution is too coarse for reliable
 spike-train correlations. GCaMP6s decay (~1s) acts as natural temporal
 integration, so denoised-trace correlations capture functional coupling
 more reliably.
+
+Both metrics therefore move with deconvolution.method, which decides whether
+C_sel is a reconstruction or the raw trace. See the notes on
+_pairwise_correlations before reading one against the other.
 """
 
 import logging
@@ -113,7 +118,8 @@ def _pairwise_correlations(C: np.ndarray,
     Parameters
     ----------
     C : array (N, T)
-        Denoised calcium traces from OASIS deconvolution.
+        Whatever the activity stage wrote as the denoised traces — an OASIS
+        reconstruction, or raw dF/F0 on the 'robust' path.
     S : array (N, T), optional
         Deconvolved spike trains (not used — kept for API compatibility).
 
@@ -126,9 +132,19 @@ def _pairwise_correlations(C: np.ndarray,
     
     Notes
     -----
-    - Input should be the denoised traces (C) from OASIS, NOT raw fluorescence.
-    - The denoised trace represents the estimated calcium concentration,
-      which directly reflects underlying neural activity.
+    - r runs higher under OASIS than under the robust detector for the same
+      recording. An AR reconstruction carries no independent noise, so nothing
+      dilutes the variance a pair shares; raw dF/F0 carries per-ROI shot noise,
+      which enters the denominator of r and pulls it toward zero.
+    - That gap has a consistent direction, so recordings deconvolved the same
+      way still rank against each other. Its size is not consistent: the
+      dilution scales with each trace's own signal-to-total variance, so it
+      bites harder on dim ROIs and does not cancel between groups of unequal
+      SNR. A cohort mixing the two methods compares two quantities, not one
+      quantity with an offset that divides out.
+    - Neither claim is measured here, and nothing upstream refuses a mixed
+      cohort — check deconv_method_used in the run records before reading a
+      group difference.
     """
     N = C.shape[0]
     if N < 2:
@@ -170,7 +186,8 @@ def _synchrony_index(C: np.ndarray, fraction_threshold: float = 0.20,
     Parameters
     ----------
     C : array (N, T)
-        Denoised calcium traces from OASIS deconvolution.
+        Denoised traces as _pairwise_correlations takes them, and carrying
+        the same dependence on deconvolution.method.
     fraction_threshold : float
         Minimum fraction of neurons co-active for a "synchronous" frame.
     S : array (N, T), optional
