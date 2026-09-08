@@ -75,7 +75,7 @@ orcann_activate_env() {
     set -u
 }
 
-# CRLF-safe submission, used by submit.sh and run_chain.sh. A Windows checkout
+# CRLF-safe submission, used by submit.sh and run_all.sh. A Windows checkout
 # (git's default core.autocrlf=true) leaves every line ending in \r, and SGE
 # spools the job file verbatim — the job then dies on the node with
 # `set -euo pipefail\r` -> "invalid option name", after queueing, which is a slow

@@ -1,0 +1,19 @@
+one directory per run key: the config that run was launched with
+
+  <run key>/
+      config.yaml   the resolved config, with --set overrides applied and every
+                    path absolute, written before any job is queued
+      logs/         stdout and stderr for every task of every stage
+      jobs.txt      the SGE job ids, so a run can be chased or cancelled
+
+Submitted jobs read this snapshot rather than the config.yaml at the workspace
+root, so editing that file while an array sits in the queue cannot change what
+the queued tasks compute. Written by `orcann snapshot`, which hpc/submit.sh and
+hpc/run_all.sh both call.
+
+This is the plan a run was launched under. What each stage actually did is in
+the records beside its outputs, not here.
+
+This folder ships empty to preserve the directory structure so the tree survives a browser
+upload to GitHub. Contents stay local and are not committed; delete this placeholder
+once the folder holds real files.

@@ -7,7 +7,7 @@
 # for every recording:
 #   qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh
 #
-# Normally submitted for you by hpc/run_chain.sh, which holds it behind the
+# Normally submitted for you by hpc/run_all.sh, which holds it behind the
 # activity array and passes EXPECTED_N so a shortfall gets reported.
 # =============================================================================
 #$ -N orcann_analysis
@@ -28,7 +28,7 @@ CONFIG="${CONFIG:-config.yaml}"
 SETARGS=(--config "${CONFIG}")
 for kv in ${SET:-}; do SETARGS+=(--set "${kv}"); done
 
-# When launched by hpc/run_chain.sh, EXPECTED_N is the recording count taken at
+# When launched by hpc/run_all.sh, EXPECTED_N is the recording count taken at
 # launch. Upstream array tasks that fail exit without writing their output, and
 # the later stages simply list a shorter directory, so a shortfall is otherwise
 # silent. This is the one place in the chain that sees every stage's result, so

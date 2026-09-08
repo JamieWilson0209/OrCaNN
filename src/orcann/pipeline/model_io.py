@@ -87,7 +87,7 @@ def save_model(model, path: str) -> None:
     torch.save(_payload(model), path)
 
 
-def save_trained_model(model, out_dir: str, name: str,
+def save_trained_model(model, out_dir: str, name: str, run_key: str,
                        report: Optional[Dict] = None) -> str:
     """Write a finished model under its own identity; return that identity.
 
@@ -109,7 +109,12 @@ def save_trained_model(model, out_dir: str, name: str,
                os.path.join(d, MODEL_FILENAME))
     if report is not None:
         from orcann.run_info import write_record
+        # The training report is a record of a model, not of a stage's output
+        # for a recording: nothing tests it for currency, because a model is
+        # chosen by being promoted. Its key is therefore what identifies the
+        # model, which is the digest of its weights and configuration.
         write_record(os.path.join(d, REPORT_FILENAME), "train_spatial",
+                     {"stage": "train_spatial", "model_digest": full}, run_key,
                      dict(report, identity=identity, digest=full))
     return identity
 

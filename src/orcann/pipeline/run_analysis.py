@@ -11,10 +11,14 @@ day, writing figures + tables to results/analysis/.
 Unlike the per-recording stages this is a single aggregate run over one activity
 store, so it is submitted directly (not as an array). Genotype and day are parsed
 from each recording folder name by the analysis package's own name parsers
-(D-line convention: line token starting with '3' is Control); the content tag the
-identity ends in is a trailing field they do not read.
+(D-line convention: line token starting with '3' is Control).
+
+Its key carries the cohort — every recording it read, with the digest of that
+recording's activity record — because an aggregate has no recording of its own
+and would otherwise read as current after a recording changed underneath it.
 """
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -27,33 +31,36 @@ def run(cfg, force=False):
     ap = cfg.analysis
     try:
         chain = prov.chain(cfg)
-        src = prov.require_store(cfg.paths.activity, chain.activity, "activity")
+        keys = prov.stage_keys(cfg, chain)
+        src = prov.require_store(cfg.paths.activity, prov.STAGE_ACTIVITY,
+                                 chain.run_key, keys[prov.STAGE_ACTIVITY],
+                                 prov.RUN_INFO)
     except prov.ProvenanceError as e:
         raise SystemExit(str(e))
-    out = prov.store_dir(cfg.paths.analysis, chain.analysis)
+    out = prov.output_store(cfg.paths.analysis, prov.STAGE_ANALYSIS,
+                            chain.run_key, keys[prov.STAGE_ANALYSIS], None)
     have = prov.list_dir_records(src, prov.RUN_INFO, prov.STAGE_ACTIVITY)
     if not have:
         print(f"analysis: no recordings with an activity record in {src} "
               f"(run activity first)")
         return False
 
-    # One acquisition must not enter the cohort twice. It can: a raw recording
-    # replaced by a re-export or a re-acquisition under the same filename takes a
-    # new identity, and the results made from the old contents stay where they
-    # are. Both are honest records of different data, but the group statistics
-    # would count one organoid as two, so the run stops rather than averaging
-    # them.
-    by_stem = {}
-    for rec in have:
-        by_stem.setdefault(prov.stem_of(rec), []).append(rec)
-    twice = {k: v for k, v in by_stem.items() if len(v) > 1}
-    if twice:
-        for stem, recs in sorted(twice.items()):
-            print(f"analysis: {stem} is present {len(recs)} times: "
-                  f"{', '.join(sorted(recs))}")
-        print(f"analysis: each of those is one acquisition under two different "
-              f"contents. Delete the folders you do not want from {src}.")
-        return False
+    # The cohort as read, not as configured: which recordings arrived and what
+    # each of them was made from. A recording that changed, arrived or dropped
+    # out is then a changed key, and the group figures are rebuilt.
+    cohort = sorted(
+        [rec, prov.record_of(src, rec, prov.RUN_INFO,
+                             prov.STAGE_ACTIVITY).get("key_digest")]
+        for rec in have)
+    key = dict(keys[prov.STAGE_ANALYSIS], cohort=cohort)
+    record = os.path.join(out, prov.RUN_INFO)
+    ok, why = prov.is_current(record, prov.STAGE_ANALYSIS, key)
+    if ok and not force:
+        print(f"analysis: current for {len(have)} recording(s) in {out}; "
+              f"nothing to do")
+        return True
+    if not ok and why != "no record":
+        print(f"analysis: rebuilding ({why})")
 
     print(f"analysis: {len(have)} recording(s)  {src} -> {out}")
     results = run_analysis(
@@ -91,4 +98,12 @@ def run(cfg, force=False):
         print(f"analysis: {out}/data/analysis_results.json is INCOMPLETE "
               f"(see stage_report in that file for tracebacks)")
         return False
+
+    # The record last, and only on a complete run: it is what marks this store
+    # done, so a rebuild that lost a stage is redone rather than trusted.
+    from orcann.run_info import write_record
+    write_record(record, prov.STAGE_ANALYSIS, key, chain.run_key,
+                 {"n_datasets": results.get("n_datasets"),
+                  "n_recordings": len(have),
+                  "upstream_store": src})
     return True

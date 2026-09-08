@@ -4,20 +4,29 @@
 # repo works wherever it is extracted; an absolute path is used as-is.
 # null = unset / use the default; lists use [a, b].
 
+# The run this config describes. The key names every output the run writes, so a
+# result is found by the name of the experiment that made it. It does not decide
+# what gets recomputed: every output records the settings it was made under, and
+# a stage redoes the recordings whose settings have moved since. Re-running a key
+# is therefore normal, and it overwrites - a result you want to keep beside a new
+# one gets its own key.
+run:
+  key: "main"   # names every output of this run: <stage>_outputs_<key>
+
 # Workspace layout: where recordings live and where results are written.
 # Every path below raw is a ROOT, not an output folder. Each stage writes into a
-# folder under its root named for the settings it ran under and the folder it
-# read, so changing a setting writes somewhere new instead of over the last run,
-# and running again with the settings unchanged finds the earlier output and
-# skips. `orcann status` prints which folders this config names and what is
-# already current in them.
+# folder under its root named for the stage and the run key. `orcann status`
+# prints which folders this config names, what is current in them, and the
+# setting that made anything else stale; `orcann runs` lists the run keys that
+# exist and how far each got.
 paths:
   raw: "data/raw"                      # recordings to process (.nd2 / .tif / .npy)
-  pre_processed: "data/pre_processed"  # motion_correction output: <root>/mc_<settings>/<recording>.tif
-  infer: "results/infer"               # infer output: <root>/inf_<model>_<settings>/<recording>/
-  spatial: "results/spatial"           # segment output: <root>/seg_<settings>/<recording>/
-  activity: "results/activity"         # activity output: <root>/act_<settings>/<recording>/ (calcium-format)
-  analysis: "results/analysis"         # analysis output: <root>/ana_<settings>/
+  pre_processed: "data/pre_processed"  # motion_correction output: <root>/motion_correction_outputs_<key>/<recording>.tif
+  infer: "results/infer"               # infer output: <root>/infer_outputs_<key>/<recording>/
+  spatial: "results/spatial"           # segment output: <root>/segment_outputs_<key>/<recording>/
+  activity: "results/activity"         # activity output: <root>/activity_outputs_<key>/<recording>/ (calcium-format)
+  analysis: "results/analysis"         # analysis output: <root>/analysis_outputs_<key>/
+  runs: "results/runs"                 # the run's own directory: <root>/<key>/config.yaml, which submitted jobs read
 
 # Trained segmenter used by the spatial detection stages
 models:
@@ -32,10 +41,9 @@ imaging:
 # Spatial detection (segmentation) knobs - used by segment
 spatial:
   threshold: 0.3         # soma-probability cut, ~0.5-0.6
-  min_area: 4            # drop detected regions smaller than this many px (0 disables)
-  min_radius: 3.0        # or drop regions below this equivalent radius in px
-  resize_to: 0           # force each frame to NxN when pixel size is unknown (0 = off)
-  train_um_per_px: null  # override the model's recorded training pixel size (null = use model's)
+  min_area: 22            # drop detected regions smaller than this many px (0 disables)
+  min_radius: 0.0        # or drop regions below this equivalent radius in px
+  resize_to: 0           # force each frame to NxN instead of the model's training frame size (0 = off)
 
 # Baseline correction (dF/F0) - first half of the activity stage
 baseline:
@@ -49,7 +57,7 @@ baseline:
 # Spike deconvolution (OASIS) - second half of the activity stage
 deconvolution:
   enabled: true               # run OASIS spike inference (false = skip; analysis then has no spikes)
-  method: "oasis"             # oasis (AR deconvolution) | robust (deterministic transient detector). No fallback between them: a failure fails the run.
+  method: "robust"             # oasis (AR deconvolution) | robust (deterministic transient detector). No fallback between them: a failure fails the run.
   decay_initialisation: null  # indicator decay constant in s, seeding OASIS's AR coefficient.
                               # NOT a measured transient decay: with optimize_g the solver
                               # refits per trace and lands near 1.7s here, because observable
@@ -89,7 +97,6 @@ train_spatial:
   channels: ["structural", "max", "variance"]  # energy channels: any of structural, max, variance, correlation
   radii: [3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0]  # LoG scale bank, cell radii in px
   min_cell_area: 0                             # strip ROIs smaller than this from training masks (0 = keep all)
-  pixel_um: null                               # training movies' um/px, recorded in the model (null if unknown)
   patch: 128                                   # training patch size in px (must be smaller than the frame)
   # Sampling - how much of each recording one epoch actually sees. These defaults
   # bound compute; they are not a measured property of the data. n_energy_frames
@@ -98,7 +105,7 @@ train_spatial:
   n_patch: 6                                   # patches sampled per recording per epoch
   fg_frac: 0.75                                # fraction of those centred on an annotated cell
   n_energy_frames: 64                          # frames pooled per forward pass (null = every frame)
-  epochs: 30                                   # training epochs
+  epochs: 100                                   # training epochs
   val_frac: 0.2                                # fraction of recordings held out for validation
   holdout: true                                # hold out val_frac to evaluate; false = train final model on all data
 

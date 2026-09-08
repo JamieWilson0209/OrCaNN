@@ -2,13 +2,12 @@
 
 NoRMCorre needs caiman, which is NOT in the segmenter/inference env, so this stage
 runs in the caiman env. Each recording is corrected and written into a store named
-for the correction settings, as <identity>.tif (T,H,W float32) beside
-<identity>.json (shift summary). A recording whose record is already in that
-store is skipped unless force=True.
+for the stage and the run key, as <recording>.tif (T,H,W float32) beside
+<recording>.json (shift summary). A recording whose record was written under the
+settings in this config is skipped unless force=True.
 
-The corrected TIFF carries the source's own axes and pixel size, so the stages
-below it read a self-describing file rather than assuming (T, H, W) at an unknown
-scale.
+The corrected TIFF declares its own axes, so the stages below it read a file that
+says it is a time series rather than one assumed to be (T, H, W).
 """
 import os
 
@@ -20,15 +19,14 @@ from orcann.run_info import write_record
 
 
 def _write_corrected(path, movie, meta):
-    """Write the corrected movie as an ImageJ TIFF carrying the source's own scale.
+    """Write the corrected movie as an ImageJ TIFF that declares its axes.
 
-    The pixel size is known only while the raw file is open. A plain TIFF drops
-    it, and intake then reads the corrected movie as a 'QYX' stack of unknown
-    scale -- which is why the physical-scale branch of
-    ``inference.resample_for_model`` has never had a µm/px to match against.
-    ImageJ is the only container ``extraction._tiff_scale`` reads a unit from.
+    A plain TIFF names no time axis, so intake reads the corrected movie back as
+    a 'QYX' stack and says so on every recording. The ImageJ header is what
+    declares the movie a time series, and it is also the only container the
+    frame interval survives in.
 
-    The ImageJ header is written by hand rather than through ``imagej=True``.
+    The header is written by hand rather than through ``imagej=True``.
     This stage runs in the caiman env, whose tifffile is six years older than
     the one every stage below it uses, and the two do not agree on what
     ``imagej=True`` means for a 3-D array: the old writer files the stack as
@@ -37,14 +35,8 @@ def _write_corrected(path, movie, meta):
     since a channel stack is not a time series. Spelling the header out produces
     a byte-identical file from both versions. See dev/two-env-split.md.
 
-    Only what the source declared is written. A recording that named no pixel
-    size leaves the unit and resolution off rather than carrying a default; the
-    axes are still declared, so the movie stops being read as 'QYX' by
-    convention either way.
-
-    The µm/px does not survive bit-exactly: TIFF stores resolution as a
-    RATIONAL, so 0.6864907163890155 reads back as 0.6864907163690688. That is
-    2e-11 µm at this scale -- a limit of the container, not a substituted value.
+    Only what the source declared is written. A recording that named no frame
+    interval leaves the key off rather than carrying a default.
     """
     import tifffile
 
@@ -52,18 +44,13 @@ def _write_corrected(path, movie, meta):
     # what marks the description as ImageJ metadata at all; nothing reads it.
     lines = ["ImageJ=1.52p", f"images={movie.shape[0]}",
              f"frames={movie.shape[0]}", "slices=1", "channels=1"]
-    kw = {}
-    ux = meta.um_per_px
-    if ux:
-        lines.append("unit=um")
-        kw["resolution"] = (1.0 / ux, 1.0 / (meta.um_per_px_y or ux))
     if meta.frame_interval_s:
         lines.append(f"finterval={float(meta.frame_interval_s)}")
     # photometric is not cosmetic here: without it tifffile reads a leading
     # dimension of 3 or 4 as colour samples, so a four-frame recording comes back
     # as one 'SYX' plane and intake refuses it.
     tifffile.imwrite(path, movie, description="\n".join(lines) + "\n",
-                     metadata=None, photometric="minisblack", **kw)
+                     metadata=None, photometric="minisblack")
 
 
 def run(cfg, task_id=None, force=False):
@@ -72,45 +59,56 @@ def run(cfg, task_id=None, force=False):
 
     raw, pre = cfg.paths.raw, cfg.paths.pre_processed
     mc = cfg.motion_correction
-    store_id = prov.motion_identity(cfg)
-    store = prov.store_dir(pre, store_id)
+    try:
+        run_key = prov.check_run_key(cfg.run.key)
+    except prov.ProvenanceError as e:
+        raise SystemExit(str(e))
+    store = prov.output_store(pre, prov.STAGE_MOTION, run_key,
+                              prov.stage_key(cfg, prov.STAGE_MOTION), None)
     os.makedirs(store, exist_ok=True)
-    pairs = identified_recordings(raw, task_id)
-    if not pairs:
+    found = identified_recordings(raw)
+    triples, surplus = prov.for_task(found, task_id)
+    if surplus:
+        print(f"motion_correction: task {task_id} is past the end of "
+              f"{len(found)} recording(s); nothing to do")
+        return True
+    if not triples:
         print(f"motion_correction: no recordings in {raw}")
         return False
 
-    print(f"motion_correction: {len(pairs)} recording(s)  {raw} -> {store}")
+    print(f"motion_correction: {len(triples)} recording(s)  {raw} -> {store}")
     print(f"{'recording':32s} {'T,H,W':>16} {'max dy,dx':>13} {'sec':>6}")
-    for f, ident in pairs:
-        record = os.path.join(store, ident + ".json")
-        if prov.is_done(record, prov.STAGE_MOTION) and not force:
-            print(f"{ident:32s} {'(current, skipped)':>16}")
+    for f, rec_id, tag in triples:
+        key = prov.stage_key(cfg, prov.STAGE_MOTION, content_tag=tag)
+        record = os.path.join(store, rec_id + ".json")
+        ok, why = prov.is_current(record, prov.STAGE_MOTION, key)
+        if ok and not force:
+            print(f"{rec_id:32s} {'(current, skipped)':>16}")
             continue
+        if not ok and why != "no record":
+            print(f"{rec_id:32s} ({why})")
         # No require_finite here: this stage is entitled to non-finite borders and
         # sanitises them itself. The metadata is read alongside the pixels so the
-        # corrected copy can carry the scale forward.
+        # corrected copy can declare what the source declared.
         with open_recording(f) as rec:
             movie = rec.array().astype(np.float32)
             meta = rec.meta
         res = correct_motion(movie, mode=mc.mode, max_shift=mc.max_shift)
-        _write_corrected(os.path.join(store, ident + ".tif"),
+        _write_corrected(os.path.join(store, rec_id + ".tif"),
                          res.corrected.astype(np.float32), meta)
         # Per-frame [dy, dx] shifts, so the activity stage can carry them into
         # the activity store for the analysis stage's residual-motion QC metric.
         if getattr(res, "shifts", None) is not None:
-            np.save(os.path.join(store, ident + "_shifts.npy"),
+            np.save(os.path.join(store, rec_id + "_shifts.npy"),
                     np.asarray(res.shifts, np.float32))
         s = res.summary()
         # The record last, and only now: it is what marks this recording done, so
         # a job killed between the two writes leaves a movie the next run cannot
         # see rather than one it would trust.
-        write_record(record, prov.STAGE_MOTION,
-                     dict(s, recording_id=ident,
-                          stage_version=prov.MOTION_VERSION,
-                          source=os.path.abspath(f)))
+        write_record(record, prov.STAGE_MOTION, key, run_key,
+                     dict(s, recording_id=rec_id, source=os.path.abspath(f)))
         T, H, W = res.corrected.shape
         mx = f"{s['max_shift_y']:.1f},{s['max_shift_x']:.1f}"
-        print(f"{ident:32s} {f'{T},{H},{W}':>16} {mx:>13} {s['elapsed_seconds']:6.0f}")
+        print(f"{rec_id:32s} {f'{T},{H},{W}':>16} {mx:>13} {s['elapsed_seconds']:6.0f}")
     print(f"corrected movies -> {store}  (now run: infer)")
     return True

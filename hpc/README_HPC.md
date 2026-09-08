@@ -140,7 +140,7 @@ to CRLF **on checkout**; those bytes reach the cluster unchanged.
 clones made after it was committed. Two runtime guards catch the rest:
 
 - `bash hpc/setup.sh` strips CR from `hpc/*.sh` and `hpc/jobs/*.sh` in preflight.
-- `hpc/submit.sh` and `hpc/run_chain.sh` submit a CR-stripped copy of the job
+- `hpc/submit.sh` and `hpc/run_all.sh` submit a CR-stripped copy of the job
   script, so a Windows checkout cannot queue a job that dies on the node.
 
 Neither can rescue *itself*: a script with CRLF fails while bash is still parsing
@@ -200,7 +200,7 @@ qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh    # torch env, CPU: results/act
 qsub hpc/jobs/train_spatial.sh                     # GPU; spatial segmenter
 
 # chained submission (segment -> activity -> analysis, via -hold_jid)
-bash hpc/run_chain.sh --config config.yaml
+bash hpc/run_all.sh --config config.yaml
 ```
 
 `activity` runs in the **caiman env** (OASIS is CaImAn's `constrained_foopsi`),
@@ -213,7 +213,7 @@ with only a warning, which changed the results while still reporting success.
 so run them in order (`motion_correct -> infer -> segment -> activity`),
 waiting for each array to finish before submitting the next — otherwise some tasks
 would index a dir still being written. The arrays are separate submissions for
-exactly this reason; `hpc/run_chain.sh` submits them as a dependency chain
+exactly this reason; `hpc/run_all.sh` submits them as a dependency chain
 (`-hold_jid`) so the ordering is enforced by the scheduler rather than by you.
 
 **Inference is split from segmentation on purpose.** `infer` runs the GPU model

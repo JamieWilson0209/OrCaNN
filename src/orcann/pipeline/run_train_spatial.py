@@ -118,7 +118,6 @@ def run(cfg, synthetic=False):
                             patch=t.patch, n_patch=t.n_patch, fg_frac=t.fg_frac,
                             n_energy_frames=t.n_energy_frames,
                             epochs=t.epochs, loader=loader,
-                            pixel_um=t.pixel_um,
                             checkpoint_path=t.checkpoint or None)
 
     metrics = {"channels": list(t.channels), "radii": list(radii),
@@ -141,7 +140,8 @@ def run(cfg, synthetic=False):
     # Written once, under an identity derived from what it is, beside its own
     # report. This is train_spatial.out, not models.dir: finishing a run does not
     # put a model into service -- promoting it does.
-    identity = save_trained_model(model, out_dir, t.name, report=metrics)
+    identity = save_trained_model(model, out_dir, t.name, cfg.run.key,
+                                  report=metrics)
     print(f"trained model -> {os.path.join(out_dir, identity)}")
     print(f"  promote it into {cfg.models.dir} to run it "
           f"(models.spatial: {identity}, or 'latest')")

@@ -7,6 +7,8 @@
     orcann analysis          --config config.yaml [--force]
     orcann train_spatial     --config config.yaml [--synthetic]
     orcann status            --config config.yaml
+    orcann runs              --config config.yaml
+    orcann snapshot          --config config.yaml
 
 Spatial detection is split: `infer` runs the GPU model once and caches the
 probability map; `segment` (CPU, no model) thresholds + extracts and is the cheap
@@ -14,11 +16,11 @@ stage you re-run while tuning. `activity` then baseline-corrects, deconvolves
 (OASIS) and renders the per-recording HTML gallery; `analysis` aggregates across
 recordings. `status` runs nothing and prints which stages are already current.
 
-Every stage writes into a folder named for the settings it ran under, so a stage
-re-run with those settings unchanged finds its own output and skips, and a
-changed setting writes somewhere new rather than over it. Every subcommand
-accepts --set section.key=value (repeatable) and --dump-config PATH. Paths and
-the model live in the config.
+Every stage writes into a folder named for the stage and `run.key`, and records
+beside each output the settings it ran under; a stage re-run with those settings
+unchanged skips, and a changed setting makes the affected recordings stale and
+recomputes them. Every subcommand accepts --set section.key=value (repeatable)
+and --dump-config PATH. Paths and the model live in the config.
 """
 import argparse
 import glob
@@ -51,68 +53,81 @@ def list_recordings(dirpath, task_id=None):
     return files
 
 
-def identified_recordings(dirpath, task_id=None):
-    """``[(path, identity)]`` for the movies in a directory, in path order.
+def identified_recordings(dirpath):
+    """``[(path, recording, content_tag)]`` for the movies in a directory.
 
-    Identity is minted here, at the edge of the pipeline, by reading two frames
-    of each file; every stage below copies the string rather than deriving it
-    again. Two files that mint the same identity are the same recording twice —
-    the same pixels in two containers, say — and the run stops naming both,
-    because either choice would silently drop one of them and the results would
-    not say which was used.
+    The tag is minted here, at the edge of the pipeline, by reading two frames of
+    each file; every stage below copies it out of the record above rather than
+    re-reading the movie. Two kinds of collision stop the run rather than being
+    resolved by guessing, because either choice would silently drop a recording
+    and the results would not say which was used: two files that mint the same
+    tag are the same recording twice, and two files that reduce to the same
+    acquisition name would write into one another's output folder.
     """
     from orcann.pipeline.extraction import IntakeError
-    from orcann.pipeline.provenance import recording_identity
+    from orcann.pipeline import provenance as prov
 
     files = list_recordings(dirpath)
-    seen = {}
+    by_tag, by_name, out = {}, {}, []
     for f in files:
         # A file that cannot be read stops the run rather than being passed over:
         # a directory the pipeline cannot fully account for is not a cohort. It is
         # named here, at enumeration, because that is where it is noticed -- and
         # every task of an array will say the same thing, which is the point.
         try:
-            seen.setdefault(recording_identity(f), []).append(f)
+            tag = prov.content_tag(f)
         except (IntakeError, OSError, ValueError) as e:
             raise SystemExit(
                 f"{f}: cannot be read as a recording, so the recordings in "
                 f"{dirpath} cannot be enumerated ({e}). Move it out of the "
                 f"directory or correct it.")
-    clashes = {i: fs for i, fs in seen.items() if len(fs) > 1}
-    if clashes:
-        lines = "\n".join(f"  {i}\n    " + "\n    ".join(fs)
-                          for i, fs in sorted(clashes.items()))
+        rec_id = prov.recording_id(f)
+        by_tag.setdefault(tag, []).append(f)
+        by_name.setdefault(rec_id, []).append(f)
+        out.append((f, rec_id, tag))
+
+    same = {t: fs for t, fs in by_tag.items() if len(fs) > 1}
+    if same:
+        lines = "\n".join("  " + "\n  ".join(fs) for fs in same.values())
         raise SystemExit(
             f"{dirpath}: these files are the same recording under more than one "
             f"name -- same frame count, frame size and end frames:\n{lines}\n"
             f"Remove or rename all but one of each.")
-    pairs = [(f, i) for i, fs in seen.items() for f in fs]
-    pairs.sort()
-    if task_id is not None:
-        return [pairs[task_id - 1]] if 1 <= task_id <= len(pairs) else []
-    return pairs
+    clash = {n: fs for n, fs in by_name.items() if len(fs) > 1}
+    if clash:
+        lines = "\n".join(f"  {n}\n    " + "\n    ".join(fs)
+                          for n, fs in sorted(clash.items()))
+        raise SystemExit(
+            f"{dirpath}: these files reduce to the same recording name, so they "
+            f"would write into one folder:\n{lines}\n"
+            f"Rename all but one of each.")
+
+    out.sort()
+    return out
 
 
-def store_movies(store, store_identity, task_id=None):
-    """``[(path, identity)]`` for the movies a motion-correction store offers.
+def store_movies(store, external):
+    """``[(path, recording, content_tag)]`` for the movies a store offers.
 
-    A store this pipeline wrote names its movies by identity and vouches for
-    them with a record each, so nothing needs re-reading. Movies corrected
-    elsewhere and dropped into ``paths.pre_processed`` have neither, so they are
-    identified the same way raw recordings are.
+    A store this pipeline wrote names its movies by recording and vouches for
+    each with a record, which carries the tag of the raw file the correction was
+    made from -- so the tag follows the chain down and a raw file replaced after
+    correction reaches every stage below. Movies corrected elsewhere have no
+    record, so they are identified the way raw recordings are.
     """
     from orcann.pipeline import provenance as prov
 
-    if store_identity == prov.EXTERNAL:
-        return identified_recordings(store, task_id)
+    if external:
+        return identified_recordings(store)
     out = []
-    for ident in prov.list_flat_records(store, prov.STAGE_MOTION, task_id):
-        mv = prov.movie_in_store(store, ident)
+    for rec_id in prov.list_flat_records(store, prov.STAGE_MOTION):
+        mv = prov.movie_in_store(store, rec_id)
         if mv is None:
             raise SystemExit(
-                f"{store}: {ident} has a motion-correction record but no movie "
+                f"{store}: {rec_id} has a motion-correction record but no movie "
                 f"beside it. Delete the record and re-run motion_correction.")
-        out.append((mv, ident))
+        rec = prov.record_of(store, rec_id, None, prov.STAGE_MOTION)
+        out.append((mv, rec_id, rec.get("key", {}).get("recording", {}).get("content_tag")))
     return out
 
 
@@ -147,76 +162,130 @@ def _models(cfg, promote):
     return True
 
 
-def _status(cfg):
-    """Which stages are current for which recordings, and where their output is.
+def _status(cfg, as_json=False):
+    """Which stages are current for which recordings, where, and why not.
 
     The one place that answers "will this run do anything?" without running it.
-    Every state it prints is read from a record, so it reports what a stage will
-    actually decide rather than what the config intends.
+    Every state it prints is read from a record and compared against the key
+    this config implies, so it reports what a stage will actually decide. With
+    --json it prints the same computation for the submission scripts, so what a
+    person reads and what a launcher acts on cannot drift apart.
+    """
+    import json as _json
+
+    from orcann.pipeline import provenance as prov
+
+    try:
+        ch = prov.tolerant_chain(cfg)
+        plans = prov.plan(cfg, ch)
+        ana = prov.analysis_plan(cfg, ch, plans[-1])
+    except prov.ProvenanceError as e:
+        if as_json:
+            print(_json.dumps({"error": str(e)}))
+            return False
+        print(f"status: {e}")
+        return False
+
+    if as_json:
+        print(_json.dumps({"run_key": ch.run_key, "model": ch.model,
+                           "stages": [p.to_dict() for p in plans + [ana]]},
+                          indent=2))
+        return True
+
+    print(f"run key         : {ch.run_key}")
+    print(f"model in service: {ch.model}")
+    for p in plans:
+        where = p.store or p.write_dir
+        note = ("   (not yet)" if p.store is None
+                else f"   (reusing {os.path.basename(p.store)})" if p.reused
+                else "")
+        print(f"  {p.stage:18s} {where}{note}")
+    if ch.motion_external:
+        print("  motion_correction is external: movies taken as given")
+
+    idents = sorted({r for p in plans for r in p.recordings})
+    cols = [(p.stage, max(9, len(p.stage))) for p in plans]
+    width = max([len(r) for r in idents] + [len("recording")])
+    print(f"\n{'recording':{width}s} " + " ".join(f"{c:>{w}s}" for c, w in cols))
+    for rec in idents:
+        row = []
+        for p in plans:
+            row.append("current" if rec in p.current
+                       else "stale" if rec in p.stale else "-")
+        print(f"{rec:{width}s} " + " ".join(f"{m:>{w}s}"
+                                            for m, (_, w) in zip(row, cols)))
+    if not idents:
+        print("(no recordings)")
+
+    reasons = {}
+    for p in plans:
+        for rec, why in p.stale.items():
+            reasons.setdefault((p.stage, why), []).append(rec)
+    if reasons:
+        print("\nstale because:")
+        for (stage, why), recs in sorted(reasons.items()):
+            print(f"  {stage:18s} {why}   ({len(recs)} recording(s))")
+
+    state = ("current" if ana.current else ana.blocked or
+             "  ".join(ana.stale.values()) or "no record")
+    print(f"\nanalysis: {state} ({len(ana.recordings)} recording(s) -> "
+          f"{ana.write_dir})")
+    return True
+
+
+def _snapshot(cfg):
+    """Write the config a submitted run will read, and print where it went.
+
+    Called by the submission scripts before any job is queued, so every task of
+    every array reads one file that cannot change under them. It is the resolved
+    config, overrides included, with every path already absolute — the jobs run
+    from the repo root and must not re-anchor a relative path against it.
+    """
+    from orcann.pipeline import provenance as prov
+
+    try:
+        d = prov.run_dir(cfg)
+    except prov.ProvenanceError as e:
+        raise SystemExit(str(e))
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "config.yaml")
+    cfg.dump(path)
+    print(path)
+    return True
+
+
+def _runs(cfg):
+    """Every run key present under the results roots, and how far each got.
+
+    The answer to "which run was that", which is the question a name without a
+    settings digest in it cannot answer on its own.
     """
     from orcann.pipeline import inference as infer
     from orcann.pipeline import provenance as prov
 
-    mc_id = prov.motion_identity(cfg)
-    try:
-        where = prov.motion_store(cfg)
-    except prov.ProvenanceError:
-        where = (prov.store_dir(cfg.paths.pre_processed, mc_id), mc_id)
-    try:
-        chain = prov.chain(cfg, motion=where)
-    except prov.ProvenanceError as e:
-        print(f"status: {e}")
-        return False
+    seg_rel = os.path.join(infer.DATA_DIRNAME, infer.META_JSON)
+    layout = [(prov.STAGE_MOTION, cfg.paths.pre_processed, None),
+              (prov.STAGE_INFER, cfg.paths.infer, infer.META_JSON),
+              (prov.STAGE_SEGMENT, cfg.paths.spatial, seg_rel),
+              (prov.STAGE_ACTIVITY, cfg.paths.activity, prov.RUN_INFO),
+              (prov.STAGE_ANALYSIS, cfg.paths.analysis, None)]
 
-    stores = [("motion_correction", chain.motion_dir),
-              ("infer", prov.store_dir(cfg.paths.infer, chain.infer)),
-              ("segment", prov.store_dir(cfg.paths.spatial, chain.segment)),
-              ("activity", prov.store_dir(cfg.paths.activity, chain.activity)),
-              ("analysis", prov.store_dir(cfg.paths.analysis, chain.analysis))]
-    print(f"model in service: {chain.model}")
-    for name, d in stores:
-        print(f"  {name:18s} {d}{'' if os.path.isdir(d) else '   (not yet)'}")
-
-    # Raw recordings when they are readable, and whatever the corrected store
-    # holds otherwise: a cohort whose raw files live on the cluster still has a
-    # status worth printing on the machine holding the results.
-    try:
-        pairs = identified_recordings(cfg.paths.raw)
-    except SystemExit as e:
-        print(f"\n{e}")
-        return False
-    idents = [i for _, i in pairs]
-    if not idents:
-        idents = prov.list_flat_records(chain.motion_dir, prov.STAGE_MOTION) \
-            if chain.motion != prov.EXTERNAL else [i for _, i in store_movies(*where)]
-
-    done = {
-        "mc": set(prov.list_flat_records(chain.motion_dir, prov.STAGE_MOTION)),
-        "infer": set(prov.list_dir_records(
-            prov.store_dir(cfg.paths.infer, chain.infer),
-            infer.META_JSON, prov.STAGE_INFER)),
-        "segment": set(prov.list_dir_records(
-            prov.store_dir(cfg.paths.spatial, chain.segment),
-            os.path.join(infer.DATA_DIRNAME, infer.META_JSON), prov.STAGE_SEGMENT)),
-        "activity": set(prov.list_dir_records(
-            prov.store_dir(cfg.paths.activity, chain.activity),
-            prov.RUN_INFO, prov.STAGE_ACTIVITY)),
-    }
-    if chain.motion == prov.EXTERNAL:
-        done["mc"] = set(idents)          # corrected elsewhere; taken as given
-
-    # Recordings in a store with no raw file behind them: a recording that was
-    # replaced or removed since it was processed. Its results are not wrong, but
-    # nothing upstream will refresh them, and the analysis stage refuses a cohort
-    # holding one acquisition twice -- so they are shown rather than left out.
-    stored = sorted(set().union(*done.values()) - set(idents))
-    cols = ["mc", "infer", "segment", "activity"]
-    print(f"\n{'recording':40s} " + " ".join(f"{c:>9s}" for c in cols))
-    for i in sorted(idents) + stored:
-        marks = " ".join(f"{('current' if i in done[c] else '-'):>9s}" for c in cols)
-        print(f"{i:40s} {marks}{'   (no raw file)' if i in stored else ''}")
-    if not idents and not stored:
-        print("(no recordings)")
+    counts = {}
+    for stage, root, rel in layout:
+        for run_key, d in prov.list_stores(root, stage):
+            n = (len(prov.list_flat_records(d, stage)) if rel is None
+                 else len(prov.list_dir_records(d, rel, stage)))
+            counts.setdefault(run_key, {})[stage] = n
+    if not counts:
+        print("no runs yet")
+        return True
+    width = max(len(k) for k in counts)
+    for run_key in sorted(counts):
+        done = "  ".join(f"{s} {counts[run_key][s]}"
+                         for s, _, _ in layout if s in counts[run_key])
+        here = "  <- run.key" if run_key == cfg.run.key else ""
+        print(f"{run_key:{width}s}  {done}{here}")
+    print("\norcann status shows what each stage would do under the current config.")
     return True
 
 
@@ -226,8 +295,10 @@ def _common(sp):
     sp.add_argument("--set", dest="overrides", action="append", default=[],
                     metavar="section.key=value",
                     help="one-off override of a config value (repeatable)")
-    sp.add_argument("--log-level", default=DEFAULT_LEVEL, choices=LEVELS,
-                    help="how much the run reports (default: %(default)s)")
+    # No default here: `status --json` writes a document to stdout and has to be
+    # the only thing on it, so it drops to ERROR unless a level was asked for.
+    sp.add_argument("--log-level", default=None, choices=LEVELS,
+                    help=f"how much the run reports (default: {DEFAULT_LEVEL})")
     sp.add_argument("--dump-config", metavar="PATH",
                     help="write a commented config to PATH and exit")
 
@@ -268,6 +339,15 @@ def build_parser():
 
     p = sub.add_parser("status", help="which stages are current, for which recordings")
     _common(p)
+    p.add_argument("--json", action="store_true",
+                   help="print the same plan as JSON, for the submission scripts")
+
+    p = sub.add_parser("runs", help="which run keys exist, and how far each got")
+    _common(p)
+
+    p = sub.add_parser("snapshot",
+                       help="write <paths.runs>/<run.key>/config.yaml for a submitted run")
+    _common(p)
 
     p = sub.add_parser("models", help="list trained models, or put one into service")
     _common(p)
@@ -302,7 +382,8 @@ def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
     # Before anything else: a stage that logs its way through a config problem
     # should be heard doing it.
-    configure_logging(a.log_level)
+    quiet = getattr(a, "json", False)
+    configure_logging(a.log_level or ("ERROR" if quiet else DEFAULT_LEVEL))
     cfg = _resolve_config(a)
     if cfg is None:
         return 2
@@ -323,7 +404,11 @@ def main(argv=None) -> int:
         from orcann.pipeline import run_train_spatial
         ok = run_train_spatial.run(cfg, synthetic=a.synthetic)
     elif a.stage == "status":
-        ok = _status(cfg)
+        ok = _status(cfg, as_json=a.json)
+    elif a.stage == "runs":
+        ok = _runs(cfg)
+    elif a.stage == "snapshot":
+        ok = _snapshot(cfg)
     elif a.stage == "models":
         ok = _models(cfg, a.promote)
     elif a.stage == "analysis":

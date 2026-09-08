@@ -3,16 +3,15 @@
 The parameter-dependent half of spatial detection, and model-free: it reads the
 cached probability map, applies threshold / min_radius, extracts a trace per ROI
 from the movie, and writes the canonical <store>/<recording>/ folder. No GPU, no
-model forward pass — so re-tuning is a cheap CPU job, and because the store is
-named for the thresholds it ran under, each set of them keeps its own output.
+model forward pass — so re-tuning is a cheap CPU job.
 
   - `--sweep "threshold=0.5,0.6,0.7" --sweep "min_radius=0,2"` previews the grid:
     one overlay montage + a comparison table per recording, no trace extraction
     (the slider replacement). Pick the winning values, set them in config, run
     segment for real.
 
-A recording whose record is already in the store for these settings is skipped
-unless force=True.
+A recording whose record was written under the settings in this config is
+skipped unless force=True.
 """
 import itertools
 import os
@@ -23,17 +22,6 @@ from orcann.pipeline import inference as infer
 from orcann.pipeline import provenance as prov
 from orcann.pipeline.cli import store_movies
 from orcann.pipeline.postprocess import labels_from_prob
-from orcann.run_info import read_record
-
-
-def _model_of(infer_store, rec_id):
-    """The model identity ``infer`` recorded for this recording's map.
-
-    The record is known readable: it is what put the recording in the list.
-    """
-    rec = read_record(os.path.join(infer_store, rec_id, infer.META_JSON),
-                      expect_stage=prov.STAGE_INFER)
-    return rec.get("model_identity")
 
 
 def _coerce(v):
@@ -76,30 +64,50 @@ def run(cfg, task_id=None, force=False, sweeps=None):
     sp, fg, frame_rate = cfg.spatial, cfg.figures, cfg.imaging.frame_rate
     try:
         chain = prov.chain(cfg)
-        inf = prov.require_store(cfg.paths.infer, chain.infer, "infer")
+        keys = prov.stage_keys(cfg, chain)
+        inf = prov.require_store(cfg.paths.infer, prov.STAGE_INFER, chain.run_key,
+                                 keys[prov.STAGE_INFER], infer.META_JSON)
     except prov.ProvenanceError as e:
         raise SystemExit(str(e))
-    recs = prov.list_dir_records(inf, infer.META_JSON, prov.STAGE_INFER, task_id)
+    found = prov.list_dir_records(inf, infer.META_JSON, prov.STAGE_INFER)
+    recs, surplus = prov.for_task(found, task_id)
+    if surplus:
+        print(f"segment: task {task_id} is past the end of {len(found)} "
+              f"recording(s); nothing to do")
+        return True
     if not recs:
         print(f"segment: no probability maps in {inf} (run infer first)")
         return False
 
-    out = prov.store_dir(cfg.paths.spatial, chain.segment)
+    seg_rel = os.path.join(infer.DATA_DIRNAME, infer.META_JSON)
+    out = prov.output_store(cfg.paths.spatial, prov.STAGE_SEGMENT, chain.run_key,
+                            keys[prov.STAGE_SEGMENT], seg_rel)
     if sweeps:
         _run_sweep(cfg, recs, sweeps, inf, out)
         return True
 
-    movies = dict((i, f) for f, i in store_movies(chain.motion_dir, chain.motion))
+    movies = dict((i, f) for f, i, _ in store_movies(chain.motion_dir,
+                                                     chain.motion_external))
     os.makedirs(out, exist_ok=True)
     base = dict(threshold=sp.threshold, min_area=sp.min_area,
                 min_radius=sp.min_radius)
     print(f"segment: {len(recs)} recording(s)  {inf} + {chain.motion_dir} -> {out}")
     missing = False
     for rec_id in recs:
-        record = os.path.join(out, rec_id, infer.DATA_DIRNAME, infer.META_JSON)
-        if prov.is_done(record, prov.STAGE_SEGMENT) and not force:
+        # The tag the map upstream was made from, carried down rather than
+        # re-derived: a raw recording replaced after inference must reach this
+        # stage as a change, and the movie beside it is a corrected copy whose
+        # own pixels are not the thing being identified.
+        upstream = prov.record_of(inf, rec_id, infer.META_JSON, prov.STAGE_INFER)
+        key = dict(keys[prov.STAGE_SEGMENT],
+                   recording=upstream.get("key", {}).get("recording", {}))
+        record = os.path.join(out, rec_id, seg_rel)
+        ok, why = prov.is_current(record, prov.STAGE_SEGMENT, key)
+        if ok and not force:
             print(f"{rec_id:32s} (current, skipped)")
             continue
+        if not ok and why != "no record":
+            print(f"{rec_id:32s} ({why})")
         mv = movies.get(rec_id)
         if mv is None:
             print(f"{rec_id:32s} ERROR: no movie for this recording in "
@@ -115,16 +123,16 @@ def run(cfg, task_id=None, force=False, sweeps=None):
         traces, centroids = infer.traces_from_labels(movie, labels, weights=prob)
 
         # The model identity comes from the map's own record, not from the chain.
-        # The store is keyed on the model's digest, so the same weights promoted
+        # The key is keyed on the model's digest, so the same weights promoted
         # under a second name reach these maps too -- and stamping the identity
         # the config selects today would then name a model that did not make
-        # them. The digest is what the store establishes; the name is not.
+        # them. The digest is what the key establishes; the name is not.
         rec_dir = infer.write_recording(
             out, rec_id, traces=traces, frame_rate=frame_rate,
             detection=base, stage=prov.STAGE_SEGMENT,
-            models={"spatial": _model_of(inf, rec_id)},
-            provenance={"upstream_store": chain.infer,
-                        "stage_version": prov.SEGMENT_VERSION},
+            models={"spatial": upstream.get("model_identity")},
+            key=key, run_key=chain.run_key,
+            provenance={"upstream_store": inf},
             labels=labels, centroids=centroids, max_projection=maxproj,
             source=mv)
         if fg.enabled:

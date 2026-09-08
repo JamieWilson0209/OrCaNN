@@ -13,6 +13,14 @@ files exist in the results directories, distinguishable only by guessing from
 which keys happen to be present; refusing them is the point, and the message
 says to re-run the stage that writes it.
 
+**A record carries the key it was written under.** ``key`` holds the settings
+the stage ran under, its link to the record above, and the recording's content
+tag; ``key_digest`` is that key in one value, for the record below to link to.
+Currency is decided by comparing those fields, so the key is a required argument
+rather than something a call site can leave out and be found to have left out
+later. The package version beside it is provenance only and is deliberately not
+in the key: a comment change must not invalidate a cohort of probability maps.
+
 **A record is always valid JSON.** NaN and Infinity are not JSON values (RFC
 8259 admits no such literals) but Python's ``json`` emits them as bare tokens,
 giving a file only Python can read back. Non-finite values are written as
@@ -33,10 +41,13 @@ from typing import Any, Dict, Optional, Tuple
 # Bumped when the meaning of an existing key changes or a required key is added
 # or removed. Readers refuse anything they do not recognise, so a bump is a
 # deliberate break: it makes every older recording re-run rather than silently
-# reinterpreted.
-SCHEMA_VERSION = 3
+# reinterpreted, which is also the whole of the migration story for a change to
+# how records are shaped.
+SCHEMA_VERSION = 4
 
 FILENAME = "run_info.json"
+
+_SOFTWARE: Optional[Dict[str, Any]] = None
 
 
 class RunInfoError(Exception):
@@ -82,17 +93,54 @@ def dump(payload: Dict[str, Any], fh) -> None:
     json.dump(json_safe(payload), fh, indent=2, allow_nan=False)
 
 
-def write_record(path: str, stage: str, payload: Dict[str, Any]) -> str:
+def _software() -> Dict[str, Any]:
+    """What produced this record: the installed package, and the commit if any.
+
+    Recorded on every record and compared by nothing. It answers "which code
+    made this number" after the fact, which is the question a person asks; what
+    a stage may reuse is decided by its ``stage_version``, which a person bumps
+    deliberately.
+    """
+    global _SOFTWARE
+    if _SOFTWARE is None:
+        try:
+            from importlib.metadata import version
+            pkg = version("orcann")
+        except Exception:
+            pkg = None
+        _SOFTWARE = {"package": pkg, "commit": _commit()}
+    return _SOFTWARE
+
+
+def _commit() -> Optional[str]:
+    """The checkout's commit, or None when this is not run from one."""
+    import subprocess
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        out = subprocess.run(["git", "-C", here, "describe", "--always", "--dirty"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def write_record(path: str, stage: str, key: Dict[str, Any], run_key: str,
+                 payload: Dict[str, Any]) -> str:
     """Write one stage's record of what it did to one recording.
 
-    Every stage's record opens the same two keys — ``schema_version`` then
-    ``stage`` — whatever the file is named and wherever it sits, so a reader can
-    establish what it is holding before interpreting anything else. The files
-    keep their existing names because each lives beside the data it describes:
-    ``<identity>.json`` next to the corrected movie, ``meta.json`` in the spatial
-    results, ``run_info.json`` in the activity results.
+    Every record opens the same keys — ``schema_version``, ``stage``,
+    ``run_key``, ``key``, ``key_digest`` — whatever the file is named and
+    wherever it sits, so a reader can establish what it is holding and whether
+    it is still current before interpreting anything else. The files keep their
+    existing names because each lives beside the data it describes:
+    ``<recording>.json`` next to the corrected movie, ``meta.json`` in the
+    spatial results, ``run_info.json`` in the activity results.
     """
-    body = {"schema_version": SCHEMA_VERSION, "stage": stage}
+    from orcann.pipeline.provenance import key_digest
+
+    body = {"schema_version": SCHEMA_VERSION, "stage": stage,
+            "run_key": run_key, "key": key, "key_digest": key_digest(key),
+            "software": _software()}
     body.update(payload)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as fh:
@@ -100,9 +148,11 @@ def write_record(path: str, stage: str, payload: Dict[str, Any]) -> str:
     return path
 
 
-def write(out_dir: str, payload: Dict[str, Any], stage: str = "activity") -> str:
+def write(out_dir: str, payload: Dict[str, Any], key: Dict[str, Any],
+          run_key: str, stage: str = "activity") -> str:
     """The activity stage's record, under the conventional ``run_info.json``."""
-    return write_record(os.path.join(out_dir, FILENAME), stage, payload)
+    return write_record(os.path.join(out_dir, FILENAME), stage, key, run_key,
+                        payload)
 
 
 def read_record(path, *, expect_stage: Optional[str] = None) -> Dict[str, Any]:

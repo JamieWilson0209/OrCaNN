@@ -28,17 +28,28 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Any, Optional, Tuple
 
 
+# --- the run this config describes -------------------------------------------
+@dataclass
+class Run:
+    # Names every output this config writes: <stage>_outputs_<key>. Chosen by a
+    # person, so a result can be found by the name of the experiment that made
+    # it. What a stage may reuse is decided by the key recorded beside each
+    # output, not by this string -- see orcann/pipeline/provenance.py.
+    key: str = "main"
+
+
 # --- workspace layout + trained model ----------------------------------------
 @dataclass
 class Paths:
     # Roots, not output folders: each stage writes into a folder under its root
-    # named for the settings it ran under -- see orcann/pipeline/provenance.py.
+    # named for the stage and the run key -- see orcann/pipeline/provenance.py.
     raw: str = "data/raw"
-    pre_processed: str = "data/pre_processed"   # <root>/mc_<settings>/<recording>.tif
-    infer: str = "results/infer"                # <root>/inf_<model>_<settings>/<recording>/
-    spatial: str = "results/spatial"            # <root>/seg_<settings>/<recording>/
-    activity: str = "results/activity"          # <root>/act_<settings>/<recording>/
-    analysis: str = "results/analysis"          # <root>/ana_<settings>/
+    pre_processed: str = "data/pre_processed"   # <root>/motion_correction_outputs_<key>/<recording>.tif
+    infer: str = "results/infer"                # <root>/infer_outputs_<key>/<recording>/
+    spatial: str = "results/spatial"            # <root>/segment_outputs_<key>/<recording>/
+    activity: str = "results/activity"          # <root>/activity_outputs_<key>/<recording>/
+    analysis: str = "results/analysis"          # <root>/analysis_outputs_<key>/
+    runs: str = "results/runs"                  # <root>/<key>/config.yaml, the run's own snapshot
 
 
 @dataclass
@@ -64,7 +75,6 @@ class SpatialParams:
     min_area: int = 4
     min_radius: float = 0.0
     resize_to: int = 0
-    train_um_per_px: Optional[float] = None
 
 
 # --- activity stage: baseline + deconvolution (calcium bridge) ---------------
@@ -126,7 +136,6 @@ class TrainSpatialParams:
     channels: Tuple[str, ...] = ("structural", "max", "variance")
     radii: Tuple[float, ...] = (3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0)
     min_cell_area: int = 0
-    pixel_um: Optional[float] = None
     patch: int = 128
     # Sampling. How much of each recording one epoch sees; the defaults bound
     # compute rather than express anything measured about the data, and
@@ -154,6 +163,7 @@ class AnalysisParams:
 
 @dataclass
 class Config:
+    run: Run = field(default_factory=Run)
     paths: Paths = field(default_factory=Paths)
     models: Models = field(default_factory=Models)
     imaging: Imaging = field(default_factory=Imaging)
@@ -173,7 +183,8 @@ class Config:
 
     # Path-valued fields, resolved against root by resolve_paths().
     _PATH_FIELDS = {
-        "paths": ("raw", "pre_processed", "infer", "spatial", "activity", "analysis"),
+        "paths": ("raw", "pre_processed", "infer", "spatial", "activity", "analysis",
+                  "runs"),
         "models": ("dir",),
         "train_spatial": ("movies", "masks", "out", "checkpoint"),
         "analysis": ("inactive_file",),
@@ -367,6 +378,7 @@ def _fmt(v: Any) -> str:
 _SECTION_DOC = {
     "paths": "Workspace layout: where recordings live and where results are written",
     "models": "Trained segmenter used by the spatial detection stages",
+    "run": "The run this config describes - names every output it writes",
     "imaging": "Recording-wide imaging metadata",
     "spatial": "Spatial detection (segmentation) knobs - used by segment",
     "baseline": "Baseline correction (dF/F0) - first half of the activity stage",
@@ -379,12 +391,14 @@ _SECTION_DOC = {
 }
 
 _FIELD_DOC = {
+    "run.key": "names every output of this run: <stage>_outputs_<key>",
     "paths.raw": "recordings to process (.nd2 / .tif / .npy)",
     "paths.pre_processed": "motion-corrected movies (motion_correction output, infer input)",
     "paths.infer": "cached probability maps (infer output, segment input)",
-    "paths.spatial": "segment output: <spatial>/<recording_id>/",
-    "paths.activity": "activity output: <activity>/<recording_id>/ (calcium-format, analysis input)",
+    "paths.spatial": "segment output: <spatial>/segment_outputs_<key>/<recording>/",
+    "paths.activity": "activity output: <activity>/activity_outputs_<key>/<recording>/ (calcium-format, analysis input)",
     "paths.analysis": "analysis stage output (group figures + tables)",
+    "paths.runs": "per-run directory: <runs>/<run.key>/config.yaml, the config a submitted run reads",
     "imaging.frame_rate": "recording frame rate in Hz",
     "imaging.indicator": "calcium indicator; resolves the AR seed when deconvolution.decay_initialisation is null",
     "models.dir": "directory of promoted, in-use models",
@@ -392,8 +406,7 @@ _FIELD_DOC = {
     "spatial.threshold": "soma-probability cut, ~0.5-0.6",
     "spatial.min_area": "drop detected regions smaller than this many px (0 disables)",
     "spatial.min_radius": "or drop regions below this equivalent radius in px",
-    "spatial.resize_to": "force each frame to NxN when pixel size is unknown (0 = off)",
-    "spatial.train_um_per_px": "override the model's recorded training pixel size (null = use model's)",
+    "spatial.resize_to": "force each frame to NxN instead of the model's training frame size (0 = off)",
     "baseline.method": "global_dff (per-trace rolling percentile); the only supported method",
     "baseline.percentile": "baseline percentile for global_dff",
     "baseline.window_fraction": "rolling-baseline window as a fraction of trace length",
@@ -424,7 +437,6 @@ _FIELD_DOC = {
     "train_spatial.channels": "energy channels: any of structural, max, variance, correlation",
     "train_spatial.radii": "LoG scale bank, cell radii in px",
     "train_spatial.min_cell_area": "strip ROIs smaller than this from training masks (0 = keep all)",
-    "train_spatial.pixel_um": "training movies' um/px, recorded in the model (null if unknown)",
     "train_spatial.patch": "training patch size in px (must be smaller than the frame)",
     "train_spatial.n_patch": "patches sampled per recording per epoch -- advanced, change only with a measured reason",
     "train_spatial.fg_frac": "fraction of those centred on an annotated cell -- advanced, change only with a measured reason",

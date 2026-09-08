@@ -1,13 +1,15 @@
 motion-corrected movies, one store per settings choice
 
-  mc_<settings>_<hash>/        e.g. mc_auto.ms20_d9474cc6/
+  motion_correction_outputs_<run key>/
       <recording>.tif          the corrected movie
       <recording>.json         shift summary; also what marks the recording done
       <recording>_shifts.npy   per-frame [dy, dx], for the analysis motion QC
 
-The store is named for the motion-correction settings that produced it, so
-re-running with them unchanged finds this output and skips, and changing one
-writes a new store beside this one instead of over it.
+The store is named for the stage and `run.key`. What decides whether this output
+is reused is not the name but the key recorded in each <recording>.json: the
+settings the stage ran under and the tag of the raw file it read. Change a
+setting and those recordings read as out of date and are redone; change the run
+key alone and this store is found and added to, rather than copied.
 
 Movies corrected outside this pipeline go in the root of this folder rather than
 in a store, and the pipeline starts at infer. They are identified by content the

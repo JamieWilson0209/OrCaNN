@@ -7,9 +7,16 @@
 #
 # stages:  motion_correct | infer | segment | activity
 #
-# It counts the recordings the stage will process — using OrCaNN's own listing,
-# so the task indices line up exactly with what the worker picks per task — and
-# runs:  qsub -t 1-N hpc/jobs/<stage>.sh
+# It writes the run's config snapshot (results/runs/<run.key>/config.yaml), counts
+# the recordings the stage will process — using OrCaNN's own listing, so the task
+# indices line up exactly with what the worker picks per task — and runs:
+#   qsub -t 1-N -v CONFIG=<the snapshot> hpc/jobs/<stage>.sh
+#
+# The jobs read the snapshot rather than config.yaml, so editing the config while
+# the array sits in the queue cannot change what the queued tasks compute.
+#
+# For the whole pipeline in one command, submitting only the stages with work to
+# do, use hpc/run_all.sh. This script submits one stage.
 #
 # A single recording is just N=1 (a one-task array); nothing special is needed.
 # Run the stages in order (each indexes the previous stage's outputs):
@@ -33,7 +40,7 @@ case "${STAGE}" in
     motion_correct|infer|segment|activity) ;;
     *) echo "unknown stage '${STAGE}'. Use: motion_correct | infer | segment | activity" >&2
        echo "(train_* are not per-recording arrays; qsub them directly. For a full" >&2
-        echo " chained run use: bash hpc/run_chain.sh)" >&2
+        echo " chained run use: bash hpc/run_all.sh)" >&2
        exit 2 ;;
 esac
 [ -f "${CONFIG}" ] || { echo "config not found: ${CONFIG}" >&2; exit 2; }
@@ -44,7 +51,12 @@ esac
 module load "${ANACONDA_MODULE}"
 set +u; source activate "${ENV_PREFIX}"; set -u
 
-N=$(python - "${STAGE}" "${CONFIG}" <<'PY'
+# The snapshot first: the count and every task must read one file that cannot
+# change under them once the array is queued.
+SNAPSHOT="$(orcann snapshot --config "${CONFIG}")"
+echo "config      : ${CONFIG} -> ${SNAPSHOT}"
+
+N=$(python - "${STAGE}" "${SNAPSHOT}" <<'PY'
 import sys
 from orcann.configLoader import Config
 from orcann.pipeline.provenance import ProvenanceError, stage_inputs
@@ -70,5 +82,5 @@ fi
 
 trap 'rm -rf "${ORCANN_CRLF_TMPDIR}"' EXIT
 
-echo "submitting '${STAGE}' as array 1-${N}  (config: ${CONFIG})"
-qsub -t 1-"${N}" -v CONFIG="${CONFIG}" "$(crlf_safe_job "hpc/jobs/${STAGE}.sh")"
+echo "submitting '${STAGE}' as array 1-${N}  (config: ${SNAPSHOT})"
+qsub -t 1-"${N}" -v CONFIG="${SNAPSHOT}" "$(crlf_safe_job "hpc/jobs/${STAGE}.sh")"

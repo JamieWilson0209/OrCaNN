@@ -23,15 +23,21 @@ data/raw/<rec>.nd2 (.tif/.npy)
   -> analysis           (torch env, CPU)  -> results/analysis/<store>/        group figures + tables
 ```
 
-Each `<store>` is a folder named for the settings that stage ran under and the
-store it read — `mc_auto.ms20_d9474cc6`, `seg_t0.5.r3_d4bf0ec1`. Run a stage
-again with those settings unchanged and it finds its own output and skips;
-change one and it writes a new store beside the old rather than over it. Each
-`<rec>` is the recording's identity: its filename, plus a four-character tag over
-the file's shape and its first and last frames, so replacing a recording with
-different data under the same name produces a different recording rather than a
-silent overwrite. `orcann status` prints which stores this config names and what
-is already current in them, without running anything.
+Each `<store>` is a folder named for the stage and `run.key`, the name you give
+the run in the config — `motion_correction_outputs_main`,
+`segment_outputs_thr06`. The name does not decide what gets recomputed: every
+output carries a record of the settings it was made under, and a stage redoes the
+recordings whose settings have moved since. Change the run key alone and the
+store already holding those settings is found and added to, rather than copied.
+
+Each `<rec>` is the acquisition name. What the file *held* — its shape and its
+first and last frames — is summarised as a tag in the record, so replacing a
+recording with different data under the same name makes every result made from it
+read as out of date rather than being silently kept.
+
+`orcann status` prints which stores this config names, what is current in them
+and the setting that made anything else stale, without running anything;
+`orcann runs` lists the run keys that exist and how far each got.
 
 `infer` is split from `segment` on purpose: the GPU model runs once and the
 probability map is cached, so tuning the threshold only re-runs the cheap CPU
@@ -41,9 +47,10 @@ probability map is cached, so tuning the threshold only re-runs the cheap CPU
 corrects them to dF/F0, runs OASIS spike inference (CaImAn's `constrained_foopsi`,
 which is why this stage shares the caiman env with motion correction), builds the
 sparse spatial footprints, and writes the calcium-format per-recording folder that
-the group analysis reads, plus the interactive `gallery.html`. If caiman is not on
-the path, deconvolution falls back to a dependency-free threshold method with a
-warning rather than failing.
+the group analysis reads, plus the interactive `gallery.html`. There is no
+fallback between detectors: without caiman on the path, `deconvolution.method:
+oasis` refuses by name and says to run the stage in the caiman env or to set
+`robust`, the deterministic transient detector, which needs no caiman.
 
 ---
 
@@ -70,7 +77,7 @@ builds just the caiman env (needed for motion correction and OASIS).
 **Locally (no cluster).** `pip install -e ".[torch]"` gives you every stage except
 OASIS deconvolution; for real OASIS you need caiman on the path (install it from
 conda-forge, never `pip install caiman`). Without caiman, set
-`deconvolution.method: threshold`. The `--synthetic` self-tests run anywhere.
+`deconvolution.method: robust`. The `--synthetic` self-tests run anywhere.
 
 ---
 
@@ -150,16 +157,19 @@ produces. To make the analysis start automatically when the last `activity` task
 finishes, add an SGE dependency: `qsub -hold_jid orcann_activity -v
 CONFIG=config.yaml hpc/jobs/analysis.sh`.
 
-**One-job alternative (small batches / a single recording).** Chains
-infer -> segment -> activity in one serial job (analysis is still separate):
+**Or the whole pipeline in one command.** `hpc/run_all.sh` asks what is already
+there, submits only the stages with work to do, and chains them with `-hold_jid`
+so each starts when the one above it finishes — including the analysis:
 
 ```bash
-bash hpc/run_chain.sh --config config.yaml
+bash hpc/run_all.sh --key batch040226              # everything, from data/raw
+bash hpc/run_all.sh --key batch040226 --dry-run    # print the plan, submit nothing
 ```
 
-This job runs in the torch env, so its `activity` step uses the threshold
-deconvolution fallback (no caiman there). For real OASIS, run the `activity` array
-in the caiman env as above.
+Every stage runs in its own env with its own resources, exactly as the per-stage
+submissions above do; this only sequences them. A stage every recording is
+already current for is not submitted at all, so re-running after a threshold
+change queues segment, activity and analysis and leaves the GPU alone.
 
 ---
 
@@ -211,15 +221,15 @@ analysis/<store>/           data/     analysis_results.json  (all stats: tests, 
 ```
 
 Row `i` of every per-recording array is label `i+1` in `labels` and centroid `i`
-in `centroids`. The recording's identity is minted once, from the raw file, and
-every stage below copies it, so one folder name follows a recording the whole way
-down. The record beside the arrays — `meta.json`, `run_info.json` — is what marks
+in `centroids`. The acquisition name is read once, from the raw file, and every
+stage below copies it, so one folder name follows a recording the whole way down. The record beside the arrays — `meta.json`, `run_info.json` — is what marks
 a recording done: a job killed partway leaves arrays no later run will read.
 
 Cross-recording **group analysis** reads one activity store and writes an
-analysis store. It refuses a cohort holding one acquisition twice — the same
-recording under two content tags, from a file replaced between runs — rather than
-counting one organoid as two. It is a single aggregate job (not a per-recording array):
+analysis store. Having no recording of its own, its record carries the cohort —
+every recording it read and what each was made from — so one recording being
+reprocessed makes the group figures stale and they are rebuilt. It is a single
+aggregate job (not a per-recording array):
 
 ```bash
 qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh
@@ -259,7 +269,7 @@ Every subcommand also runs without a cluster:
 
 ```bash
 orcann segment --config config.yaml --set spatial.threshold=0.55   # one-off override
-orcann activity --config config.yaml --set deconvolution.method=threshold  # no caiman
+orcann activity --config config.yaml --set deconvolution.method=robust  # no caiman
 orcann analysis --config config.yaml                # group analysis, after activity
 
 orcann train_spatial --synthetic                    # self-test: no data, no GPU
@@ -279,9 +289,9 @@ orcann train_spatial --synthetic                    # self-test: no data, no GPU
 - **Group analysis**: genotype and developmental day are parsed from the recording
   id, so confirm `dataset_features.csv` after the first run and adjust the naming
   or the parser if the parsed columns are wrong.
-- **Envs**: `activity` runs in the caiman env for real OASIS; run elsewhere it
-  falls back to the threshold method. Keep the two envs separate so caiman's
-  numpy pin never constrains torch.
+- **Envs**: `activity` runs in the caiman env for real OASIS; run elsewhere with
+  `deconvolution.method: oasis` it refuses rather than substituting a detector.
+  Keep the two envs separate so caiman's numpy pin never constrains torch.
 
 ---
 

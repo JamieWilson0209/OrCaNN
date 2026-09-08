@@ -1,15 +1,16 @@
 group analysis output: figures and tables (one aggregate run, not per-recording)
 
-  ana_<hash>/
+  analysis_outputs_<run key>/
       data/     analysis_results.json  dataset_features.csv  selected_rois.csv
                 quality_gating.json  outlier_report.txt
       figures/  grouped QC, genotype and developmental-day comparison figures
+      run_info.json
 
-Aggregates one activity store -- the one this config names -- and is named for
-that store and the analysis settings. It refuses a cohort holding one acquisition
-twice, which happens when a raw file was replaced between runs and both the old
-and the new results are still present: counting one organoid as two would be
-worse than stopping.
+Aggregates one activity store. Having no recording of its own, its key carries
+the cohort -- every recording it read, with the digest of that recording's
+activity record -- so one recording being reprocessed makes these figures stale
+and `orcann status` names which recording changed. The record is written only
+when every stage of the analysis completed.
 
 Written by: analysis.
 

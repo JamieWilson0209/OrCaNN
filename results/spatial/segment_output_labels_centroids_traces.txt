@@ -1,14 +1,14 @@
 segment output: labels, centroids, per-ROI traces
 
-  seg_<settings>_<hash>/       e.g. seg_t0.5.r3_d4bf0ec1/
+  segment_outputs_<run key>/
       <recording>/   data/     labels.npy  centroids.npy  traces.npy
                                max_projection.npy  meta.json
                      figures/  overlay.png
 
-The store is named for the threshold and radius it ran under and for the infer
-store it read, so each set of detection parameters keeps its own output and
-re-running with them unchanged skips. `--sweep` writes its montage and table into
-the store the current settings name, without extracting.
+Each meta.json records the threshold and radius the recording was extracted
+under and the digest of the infer output it read, so changing either makes those
+recordings stale and `orcann status` names which setting moved. `--sweep` writes
+its montage and table beside the recordings, extracting nothing.
 
 Written by: segment.   Read by: activity.
 

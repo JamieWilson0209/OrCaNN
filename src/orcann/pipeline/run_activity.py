@@ -14,10 +14,9 @@ gallery / analysis. For each segmented recording it:
      plus run_info.json (dims + frame rate);
   5. renders the interactive HTML gallery.
 
-A recording whose record is already in the store for these settings is skipped
-unless force=True. The per-recording folder is named by the recording's identity,
-whose leading fields are the acquisition name, so the genotype/day parsing in the
-analysis stage keys off it as before.
+A recording whose record was written under the settings in this config is
+skipped unless force=True. The per-recording folder is named by the acquisition,
+which is what the analysis stage parses genotype and day out of.
 """
 import logging
 import os
@@ -147,7 +146,7 @@ def _deconvolve(cfg, c_dff):
             res.get("method"))
 
 
-def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
+def _write_outputs(out_dir, rec_id, cfg, *, key, run_key, c_dff, c_raw, denoised, spikes,
                    noise, censored, rejected, deconv_used, labels, mean_proj, max_proj, source,
                    motion=None, motion_shifts=None, global_intensity=None,
                    provenance=None):
@@ -207,7 +206,7 @@ def _write_outputs(out_dir, rec_id, cfg, *, c_dff, c_raw, denoised, spikes,
         payload["motion_correction"] = motion
     if global_intensity is not None:
         payload["global_intensity"] = global_intensity
-    write_run_info(out_dir, payload)
+    write_run_info(out_dir, payload, key, run_key)
 
 
 def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
@@ -238,26 +237,42 @@ def _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
 def run(cfg, task_id=None, force=False):
     try:
         chain = prov.chain(cfg)
-        sp = prov.require_store(cfg.paths.spatial, chain.segment, "segment")
+        keys = prov.stage_keys(cfg, chain)
+        seg_record = os.path.join(infer.DATA_DIRNAME, infer.META_JSON)
+        sp = prov.require_store(cfg.paths.spatial, prov.STAGE_SEGMENT,
+                                chain.run_key, keys[prov.STAGE_SEGMENT], seg_record)
     except prov.ProvenanceError as e:
         raise SystemExit(str(e))
-    seg_record = os.path.join(infer.DATA_DIRNAME, infer.META_JSON)
-    recs = prov.list_dir_records(sp, seg_record, prov.STAGE_SEGMENT, task_id)
+    found = prov.list_dir_records(sp, seg_record, prov.STAGE_SEGMENT)
+    recs, surplus = prov.for_task(found, task_id)
+    if surplus:
+        print(f"activity: task {task_id} is past the end of {len(found)} "
+              f"recording(s); nothing to do")
+        return True
     if not recs:
         print(f"activity: no segmented recordings in {sp} (run segment first)")
         return False
 
-    out = prov.store_dir(cfg.paths.activity, chain.activity)
-    movies = dict((i, f) for f, i in store_movies(chain.motion_dir, chain.motion))
+    out = prov.output_store(cfg.paths.activity, prov.STAGE_ACTIVITY,
+                            chain.run_key, keys[prov.STAGE_ACTIVITY],
+                            RUN_INFO_FILENAME)
+    movies = dict((i, f) for f, i, _ in store_movies(chain.motion_dir,
+                                                     chain.motion_external))
     os.makedirs(out, exist_ok=True)
     print(f"activity: {len(recs)} recording(s)  {sp} + {chain.motion_dir} -> {out}")
     missing = False
     for rec_id in recs:
         out_dir = os.path.join(out, rec_id)
-        if prov.is_done(os.path.join(out_dir, RUN_INFO_FILENAME),
-                        prov.STAGE_ACTIVITY) and not force:
+        upstream = prov.record_of(sp, rec_id, seg_record, prov.STAGE_SEGMENT)
+        key = dict(keys[prov.STAGE_ACTIVITY],
+                   recording=upstream.get("key", {}).get("recording", {}))
+        ok, why = prov.is_current(os.path.join(out_dir, RUN_INFO_FILENAME),
+                                  prov.STAGE_ACTIVITY, key)
+        if ok and not force:
             print(f"{rec_id:32s} (current, skipped)")
             continue
+        if not ok and why != "no record":
+            print(f"{rec_id:32s} ({why})")
 
         traces, labels, centroids, max_proj = _load_spatial(sp, rec_id)
         mv = movies.get(rec_id)
@@ -289,15 +304,15 @@ def run(cfg, task_id=None, force=False):
         denoised, spikes, noise, censored, rejected, deconv_used = _deconvolve(cfg, c_dff)
 
         motion, motion_shifts = _motion_meta(mv)
-        _write_outputs(out_dir, rec_id, cfg, c_dff=c_dff, c_raw=c_raw,
+        _write_outputs(out_dir, rec_id, cfg, key=key, run_key=chain.run_key,
+                       c_dff=c_dff, c_raw=c_raw,
                        denoised=denoised, spikes=spikes, noise=noise,
                        censored=censored, rejected=rejected,
                        deconv_used=deconv_used,
                        labels=labels, mean_proj=mean_proj, max_proj=max_proj,
                        source=mv, motion=motion, motion_shifts=motion_shifts,
                        global_intensity=gi,
-                       provenance={"upstream_store": chain.segment,
-                                   "stage_version": prov.ACTIVITY_VERSION})
+                       provenance={"upstream_store": sp})
         _write_galleries(cfg, out_dir, rec_id, movie, labels, centroids, max_proj,
                          c_dff, denoised, spikes)
 

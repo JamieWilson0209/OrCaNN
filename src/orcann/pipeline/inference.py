@@ -80,28 +80,36 @@ def recording_id(path: str) -> str:
 
 # SPATIAL — movie -> probability -> labels -> traces
 
-def resample_plan(model, hw, in_um: Optional[float] = None, resize_to: int = 0,
-                  train_um_override: Optional[float] = None) -> Dict[str, object]:
+def resample_plan(model, hw, resize_to: int = 0) -> Dict[str, object]:
     """Which rule ``resample_for_model`` will apply to a frame of shape ``hw``.
 
     The decision and the zoom factors live here rather than in the resampler, so
     what a stage records is what the stage did. ``branch`` is one of
-    ``physical`` (µm/px matched), ``resize_to`` (explicit override), ``train_hw``
-    (frame-size matched to the model) or ``none`` (the movie is already at the
-    model's size, or the model records no size).
+    ``resize_to`` (explicit override), ``train_hw`` (frame size matched to the
+    model) or ``none`` (the movie is already at the model's size, or the model
+    records no size).
+
+    The scale that matters is the one the LoG bank was fitted at. Its radii are
+    fixed at construction and nothing rescales them, so it is the movie that
+    moves: a frame of a different size presents cells at a different number of
+    pixels across and is brought to the training frame size before the forward
+    pass.
+
+    Frame size is a proxy for scale, and it holds only at a constant field of
+    view. Two recordings of the same field at 512 and 256 px are corrected by
+    this; two recordings at one frame size through different objectives are not,
+    and nothing here notices — the cells are simply a different size than the
+    bank expects. Nothing is in microns: what a pixel measures on the specimen is
+    not a quantity this pipeline knows.
     """
     cfg = getattr(model, "config", {})
-    target_um = train_um_override or cfg.get("pixel_um")
     target_hw = cfg.get("train_hw")
     H, W = int(hw[0]), int(hw[1])
     plan: Dict[str, object] = {
-        "source_hw": [H, W], "in_um_per_px": in_um, "target_um_per_px": target_um,
+        "source_hw": [H, W],
         "train_hw": [int(v) for v in target_hw] if target_hw else None,
         "resize_to": int(resize_to)}
-    if target_um and in_um:                            # physical scale match
-        f = in_um / target_um
-        plan.update(branch="physical", zoom_y=float(f), zoom_x=float(f))
-    elif resize_to:                                    # explicit override
+    if resize_to:                                      # explicit override
         plan.update(branch="resize_to", zoom_y=resize_to / H, zoom_x=resize_to / W)
     elif target_hw and (H, W) != tuple(target_hw):     # frame-size match
         plan.update(branch="train_hw",
@@ -111,19 +119,14 @@ def resample_plan(model, hw, in_um: Optional[float] = None, resize_to: int = 0,
     return plan
 
 
-def resample_for_model(model, movie: np.ndarray, in_um: Optional[float] = None,
-                       resize_to: int = 0, train_um_override: Optional[float] = None
-                       ) -> np.ndarray:
-    """Resample a movie to the scale the segmenter was trained at.
+def resample_for_model(model, movie: np.ndarray, resize_to: int = 0) -> np.ndarray:
+    """Resample a movie to the frame size the segmenter was trained at.
 
-    Physical match (µm/px) is preferred when both the recording's pixel size and
-    the model's training pixel size are known; otherwise a frame-size match to
-    the model's ``train_hw`` is used, with ``resize_to`` as an explicit override
-    for inputs that carry no scale metadata at all. ``resample_plan`` holds the
-    choice between those rules.
+    ``resize_to`` overrides that for a model that records no training size.
+    ``resample_plan`` holds the choice between the two.
     """
     from scipy.ndimage import zoom
-    plan = resample_plan(model, movie.shape[1:], in_um, resize_to, train_um_override)
+    plan = resample_plan(model, movie.shape[1:], resize_to)
     if plan["branch"] == "none":
         return movie.astype(np.float32)
     return zoom(movie, (1, plan["zoom_y"], plan["zoom_x"]), order=1).astype(np.float32)
@@ -160,6 +163,7 @@ def traces_from_labels(movie: np.ndarray, labels: np.ndarray,
 def write_recording(out_root: str, rec_id: str, *,
                     traces: np.ndarray, frame_rate: float,
                     detection: Dict, stage: str, models: Dict[str, str],
+                    key: Dict, run_key: str,
                     rates: Optional[np.ndarray] = None,
                     events: Optional[Dict[str, np.ndarray]] = None,
                     labels: Optional[np.ndarray] = None,
@@ -174,9 +178,11 @@ def write_recording(out_root: str, rec_id: str, *,
     optional: the full runner passes them, the trace-only runner omits them. The
     ROI axis of ``traces``/``rates``/``events`` is always written.
 
-    ``provenance`` carries the store this output belongs to and the store it was
-    made from. The record is written after the arrays and is what marks the
-    recording done, so a run killed partway leaves arrays no later run will read.
+    ``key`` is what the stage ran under and is what a later run compares against
+    to decide whether these arrays are still the ones its config asks for;
+    ``provenance`` carries the directory this output was made from. The record is
+    written after the arrays and is what marks the recording done, so a run
+    killed partway leaves arrays no later run will read.
     """
     out = os.path.join(out_root, rec_id)
     data = os.path.join(out, DATA_DIRNAME)
@@ -214,7 +220,7 @@ def write_recording(out_root: str, rec_id: str, *,
         },
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
-    write_record(os.path.join(data, META_JSON), stage, meta)
+    write_record(os.path.join(data, META_JSON), stage, key, run_key, meta)
     return out
 
 
@@ -266,11 +272,10 @@ def write_overlay(path: str, max_proj: np.ndarray, labels: np.ndarray) -> None:
 
 # FULL CHAIN — movie -> everything, in one process (the fused runner's core)
 
-def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
-               train_um_override: Optional[float] = None
+def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0
                ) -> Tuple[np.ndarray, np.ndarray, Dict[str, object]]:
     """Parameter-independent half of detection (the ``infer`` stage): load ->
-    resample to the model's scale -> predict the soma-probability map. Returns
+    resample to the model's frame size -> predict the soma-probability map. Returns
     ``(prob, max_projection, provenance)`` at the model's working resolution. No
     threshold, no extraction — the result is cached so tuning never re-runs this.
 
@@ -287,14 +292,6 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
     with open_recording(movie_path) as rec:
         n_frames = rec.meta.n_frames
         meta_record = rec.meta.as_record()
-        # The recording already told us its pixel size when it was opened; reading it
-        # here rather than re-opening the file is the only change to what
-        # resample_for_model is given. The .nd2 restriction is kept deliberately: a
-        # declared TIFF now carries a micron size too, and passing it would arm the
-        # physical-scale branch the moment a checkpoint records a training scale.
-        # That switch is a decision, not a side effect -- see dev/segment-stage-review.md.
-        in_um = rec.meta.um_per_px if movie_path.endswith(".nd2") else None
-
         # Only the frames the energy front-end will actually pool. It subsamples on an
         # even stride when handed more than n_energy_frames, so selecting the same
         # frames here and handing it exactly those leaves the result unchanged while
@@ -305,11 +302,9 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
         else:
             idx = list(range(n_frames))
         plan = resample_plan(spatial_model, (rec.meta.height, rec.meta.width),
-                             in_um=in_um, resize_to=resize_to,
-                             train_um_override=train_um_override)
-        pooled = resample_for_model(
-            spatial_model, rec.frames(idx, require_finite=True), in_um=in_um,
-            resize_to=resize_to, train_um_override=train_um_override)
+                             resize_to=resize_to)
+        pooled = resample_for_model(spatial_model,
+                                    rec.frames(idx, require_finite=True), resize_to)
         prob = predict_prob(spatial_model, pooled).astype(np.float32)
 
         # The projection is over every frame, so it is streamed rather than
@@ -318,9 +313,7 @@ def infer_prob(movie_path: str, spatial_model, *, resize_to: int = 0,
         # factor is exactly 1.
         maxproj = None
         for block in rec.stream(32, require_finite=True):
-            block = resample_for_model(spatial_model, block, in_um=in_um,
-                                       resize_to=resize_to,
-                                       train_um_override=train_um_override)
+            block = resample_for_model(spatial_model, block, resize_to)
             block_max = block.max(axis=0)
             maxproj = block_max if maxproj is None else np.maximum(maxproj, block_max)
 

@@ -1,12 +1,17 @@
 infer output: cached probability maps
 
-  inf_<model>_<hash>/          e.g. inf_segmenter.4b76_610892b7/
+  infer_outputs_<run key>/
       <recording>/   prob.npy  max_projection.npy  meta.json  prob_overlay.png
 
-The store is named for the model that ran -- by its content, so the same weights
-promoted under a second name reuse these maps -- and for the movie store they
-were made from. Promoting a different model writes a different store; it does not
-overwrite these and does not leave them looking current.
+The model that ran is part of the key recorded in each meta.json -- by its
+content, so the same weights promoted under a second name reuse these maps.
+Promoting a different model leaves these reading as out of date and they are
+recomputed; it does not overwrite them silently and does not leave them looking
+current.
+
+This is the expensive stage and its output does not depend on any knob tuned
+below it, so a run whose inference settings are unchanged finds this store
+whatever its own run key is, and computes nothing.
 
 meta.json is written last and is what marks a recording done: a run killed
 partway leaves a prob.npy no later run will read.
