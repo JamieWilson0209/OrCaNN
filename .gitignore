@@ -89,12 +89,15 @@ desktop.ini
 *.swo
 *~
 
-# --- Agent instructions (local, not part of the project) ---
+# --- Agent instructions and configuration (local, not part of the project) ---
 # CLAUDE.md tells a coding agent how to work in this checkout: conventions,
-# which conda env imports what, how reviews are run. It describes a way of
-# working rather than the pipeline itself, so it stays on the machine of
-# whoever uses an agent and out of the shared history.
+# which conda env imports what, how reviews are run. .claude/ is the rest of the
+# same thing -- agents, skills, settings and permissions for whoever is running
+# one. Both describe a way of working rather than the pipeline itself, so they
+# stay on the machine of whoever uses an agent and out of the shared history.
 CLAUDE.md
+/.claude/
+.claude.json
 
 # Manim render output and its scratch frames. The scenes in docs/anim/ are
 # source; the mp4s they produce are not committed.
