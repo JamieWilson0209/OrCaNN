@@ -95,3 +95,8 @@ desktop.ini
 # working rather than the pipeline itself, so it stays on the machine of
 # whoever uses an agent and out of the shared history.
 CLAUDE.md
+
+# Manim render output and its scratch frames. The scenes in docs/anim/ are
+# source; the mp4s they produce are not committed.
+/videos/
+docs/anim/_frames/
