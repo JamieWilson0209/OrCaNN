@@ -1,10 +1,11 @@
 """Movie intake: open a recording, report what it says about itself, read what is asked.
 
-This module reports; it does not decide. It reads the axis meaning, pixel size and
-frame interval the file states, and refuses a file it cannot honestly interpret. It
-does not guess which axis is time, does not choose a channel, and does not resample:
-scale reaches ``inference.resample_for_model`` as a recorded fact, and the decision
-about what to do with it stays there.
+This module reports; it does not decide. It reads the axis meaning and the frame
+interval the file states, and refuses a file it cannot honestly interpret. It does
+not guess which axis is time, does not choose a channel, and does not resample:
+what a frame is worth in pixels is all any stage below asks, and matching a movie
+to the scale the segmenter was trained at is ``inference.resample_for_model``'s
+decision to make from the frame size.
 
 ``open_recording`` reads headers only, so a caller can ask for the frames it needs
 rather than the whole movie — ``frames`` for a subset, ``stream`` for a reduction over
@@ -40,9 +41,11 @@ class IntakeError(ValueError):
 class RecordingMeta:
     """What the file said about itself. Every field is read, never inferred.
 
-    ``um_per_px`` of None means the file did not say — never a default and never a
-    config value. ``axes_source`` is "declared" when the file named its axes and
-    "assumed" when it did not and (T, H, W) was taken by convention.
+    ``frame_interval_s`` of None means the file did not say — never a default and
+    never a config value; it is provenance either way, because the frame rate
+    every stage computes with comes from the config. ``axes_source`` is
+    "declared" when the file named its axes and "assumed" when it did not and
+    (T, H, W) was taken by convention.
     """
     source: str
     n_frames: int
@@ -51,8 +54,6 @@ class RecordingMeta:
     dtype_in: str
     axes: str = "TYX"
     axes_source: str = "assumed"
-    um_per_px: Optional[float] = None
-    um_per_px_y: Optional[float] = None
     frame_interval_s: Optional[float] = None
     selected: Dict[str, int] = field(default_factory=dict)
 
@@ -61,7 +62,6 @@ class RecordingMeta:
         return {"source": self.source, "n_frames": self.n_frames,
                 "source_hw": [self.height, self.width], "dtype_in": self.dtype_in,
                 "axes": self.axes, "axes_source": self.axes_source,
-                "um_per_px": self.um_per_px, "um_per_px_y": self.um_per_px_y,
                 "frame_interval_s": self.frame_interval_s,
                 "selected": dict(self.selected)}
 
@@ -163,29 +163,17 @@ def _open_npy(path: str):
     return meta, read, close
 
 
-def _tiff_scale(tf) -> tuple:
-    """(um_per_px_x, um_per_px_y, frame_interval_s) from the tags, or Nones."""
-    ux = uy = interval = None
+def _tiff_interval(tf) -> Optional[float]:
+    """The frame interval in seconds from the ImageJ header, or None.
+
+    Provenance only: every stage computes with ``imaging.frame_rate`` from the
+    config, so this records what the file claimed without anything acting on it.
+    """
     try:
-        ij = tf.imagej_metadata or {}
-        unit = str(ij.get("unit", "")).lower()
-        if unit in ("um", "micron", "microns", "\\u00b5m", "µm"):
-            tags = tf.pages[0].tags
-            for name, slot in (("XResolution", "x"), ("YResolution", "y")):
-                if name in tags:
-                    num, den = tags[name].value
-                    if num:
-                        val = float(den) / float(num)
-                        if slot == "x":
-                            ux = val
-                        else:
-                            uy = val
-        fi = ij.get("finterval")
-        if fi:
-            interval = float(fi)
+        fi = (tf.imagej_metadata or {}).get("finterval")
+        return float(fi) if fi else None
     except Exception:                      # tags absent or malformed -> stays unknown
-        pass
-    return ux, uy, interval
+        return None
 
 
 def _open_tiff(path: str):
@@ -214,11 +202,10 @@ def _open_tiff(path: str):
             f"{path}: axes {axes!r} declare a '{lead}' first axis, not time. This "
             f"stage analyses one time series per file; a z-stack or a channel stack "
             f"is not one. Export the time series, or exclude the file.")
-    ux, uy, interval = _tiff_scale(tf)
     t, h, w = shape
     meta = RecordingMeta(source=os.path.abspath(path), n_frames=int(t), height=int(h),
                          width=int(w), dtype_in=str(series.dtype), axes_source=source,
-                         um_per_px=ux, um_per_px_y=uy, frame_interval_s=interval)
+                         frame_interval_s=_tiff_interval(tf))
 
     def read(idx):
         arr = tf.asarray(key=idx)
@@ -249,16 +236,9 @@ def _open_nd2(path: str):
                           if need == "T" else "")
             raise IntakeError(f"{path}: nd2 has no '{need}' axis (present: {have}); "
                               f"cannot form (T, H, W).{extra_hint}")
-    ux = uy = None
-    try:
-        v = f.voxel_size()
-        ux, uy = float(v.x), float(v.y)
-    except Exception:                      # metadata absent -> stays unknown
-        pass
     meta = RecordingMeta(source=os.path.abspath(path), n_frames=int(sizes["T"]),
                          height=int(sizes["Y"]), width=int(sizes["X"]),
-                         dtype_in=str(f.dtype), axes_source="declared",
-                         um_per_px=ux, um_per_px_y=uy)
+                         dtype_in=str(f.dtype), axes_source="declared")
 
     def read(idx):
         out = np.empty((len(idx), meta.height, meta.width), np.float32)

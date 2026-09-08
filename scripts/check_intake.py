@@ -62,8 +62,8 @@ def synthetic(tmp):
 
     np.save(p("plain.npy"), a)
     tifffile.imwrite(p("q.tif"), a)
-    tifffile.imwrite(p("t.tif"), a, imagej=True, resolution=(1 / 0.6865, 1 / 0.6865),
-                     metadata={"axes": "TYX", "unit": "um", "finterval": 0.5})
+    tifffile.imwrite(p("t.tif"), a, imagej=True,
+                     metadata={"axes": "TYX", "finterval": 0.5})
     tifffile.imwrite(p("z.tif"), a, imagej=True, metadata={"axes": "ZYX"})
     tifffile.imwrite(p("c.tif"), a, imagej=True, metadata={"axes": "CYX"})
     np.save(p("flat.npy"), a[0])
@@ -78,12 +78,10 @@ def synthetic(tmp):
               lambda: _assert(open_recording(p("q.tif")).meta.axes_source == "assumed"))
     expect_ok("declared TYX tif reads as declared",
               lambda: _assert(open_recording(p("t.tif")).meta.axes_source == "declared"))
-    expect_ok("declared tif carries its pixel size",
-              lambda: _assert(abs(open_recording(p("t.tif")).meta.um_per_px - 0.6865) < 1e-9))
     expect_ok("declared tif carries its frame interval",
               lambda: _assert(open_recording(p("t.tif")).meta.frame_interval_s == 0.5))
-    expect_ok("a file that states no scale reports None, not a default",
-              lambda: _assert(open_recording(p("q.tif")).meta.um_per_px is None))
+    expect_ok("a file that states no interval reports None, not a default",
+              lambda: _assert(open_recording(p("q.tif")).meta.frame_interval_s is None))
 
     print("\nrefused by name")
     expect_refused("a z-stack is not a time series",
@@ -143,7 +141,7 @@ def real(dirpath):
                 whole = rec.array()
                 same = np.array_equal(sub, whole[idx])
                 label = (f"{os.path.basename(f)[:38]:40} {m.n_frames}x{m.height}x{m.width} "
-                         f"axes={m.axes_source} um/px={m.um_per_px}")
+                         f"axes={m.axes_source} interval={m.frame_interval_s}")
                 if same:
                     print(f"  ok       {label}")
                 else:

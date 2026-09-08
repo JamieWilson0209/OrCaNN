@@ -108,13 +108,13 @@ def train_segmenter(sources, channels: Dict[str, bool],
                     radii_px=(4, 6, 9, 13, 18), patch: int = 128, n_patch: int = 6,
                     fg_frac: float = 0.75,
                     epochs: int = 30, lr: float = 3e-3, hidden: int = 24,
-                    n_energy_frames: Optional[int] = 64, seed: int = 0, pixel_um=None,
+                    n_energy_frames: Optional[int] = 64, seed: int = 0,
                     loader=None, checkpoint_path: Optional[str] = None,
                     device: Optional[torch.device] = None) -> SpatialSegmenter:
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SpatialSegmenter(radii_px=radii_px, hidden=hidden, pixel_um=pixel_um,
+    model = SpatialSegmenter(radii_px=radii_px, hidden=hidden,
                              n_energy_frames=n_energy_frames, **channels).to(device)
     # record the training frame size so inference can auto-rescale new recordings
     rec0 = _materialize(sources[0], loader)

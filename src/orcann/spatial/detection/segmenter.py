@@ -40,7 +40,6 @@ class SpatialSegmenter(nn.Module):
         learnable_scales: bool = False,
         corr_radius: int = 2,
         corr_dirs: int = 4,
-        pixel_um: Optional[float] = None,
         train_hw: Optional[Sequence[int]] = None,
     ) -> None:
         super().__init__()
@@ -50,10 +49,11 @@ class SpatialSegmenter(nn.Module):
                        "use_variance": use_variance, "use_correlation": use_correlation,
                        "learnable_scales": learnable_scales,
                        "corr_radius": corr_radius, "corr_dirs": corr_dirs,
-                       "pixel_um": pixel_um,
                        "train_hw": list(train_hw) if train_hw else None}
-        self.pixel_um = pixel_um            # microns/px the model was trained at
-        self.train_hw = tuple(train_hw) if train_hw else None   # training frame (H,W)
+        # The frame size the LoG bank was fitted at. A movie of a different size
+        # presents cells at a different number of pixels across, so infer brings
+        # it here before the forward pass.
+        self.train_hw = tuple(train_hw) if train_hw else None
         # Use the detector purely as the energy() feature extractor; it has no
         # detection head, so it contributes only the LoG scale parameters.
         self.front = SpatialScatterDetector(
