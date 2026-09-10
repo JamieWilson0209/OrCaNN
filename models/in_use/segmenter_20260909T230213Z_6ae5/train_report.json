@@ -1,0 +1,37 @@
+{
+  "schema_version": 4,
+  "stage": "train_spatial",
+  "run_key": "main",
+  "key": {
+    "stage": "train_spatial",
+    "model_digest": "6ae5cf781cbb413e8082499156643f7cf8e0ce3987f6db6307a929d8d1cb3c36"
+  },
+  "key_digest": "bf1f001b3982584ed248e52cb517817eb7baeb3151500f399a140a5ab3a2646f",
+  "software": {
+    "package": "0.2.0",
+    "commit": "4ff3206-dirty"
+  },
+  "channels": [
+    "structural",
+    "max",
+    "variance"
+  ],
+  "radii": [
+    3.0,
+    3.7,
+    4.5,
+    5.5
+  ],
+  "n_recordings": 22,
+  "folds": 1,
+  "n_train": 22,
+  "n_val": 0,
+  "held_out": false,
+  "patch": 512,
+  "epochs": 300,
+  "synthetic": false,
+  "edge_correction": "mean_fill_gain",
+  "name": "segmenter",
+  "identity": "segmenter_20260909T230213Z_6ae5",
+  "digest": "6ae5cf781cbb413e8082499156643f7cf8e0ce3987f6db6307a929d8d1cb3c36"
+}
