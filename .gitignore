@@ -38,6 +38,10 @@ env/
 *.npy
 *.npz
 *.pt
+# ...but a promoted model is the thing the pipeline runs, so a checkout
+# without it cannot reproduce a result. Training scratch stays ignored:
+# it lives in models/trained as _<name>.pt.
+!models/in_use/**/*.pt
 *.pth
 *.ckpt
 *.h5
