@@ -41,6 +41,7 @@ class SpatialSegmenter(nn.Module):
         corr_radius: int = 2,
         corr_dirs: int = 4,
         train_hw: Optional[Sequence[int]] = None,
+        edge_correction: str = "zeros",
     ) -> None:
         super().__init__()
         self.config = {"radii_px": list(radii_px), "hidden": hidden,
@@ -49,7 +50,8 @@ class SpatialSegmenter(nn.Module):
                        "use_variance": use_variance, "use_correlation": use_correlation,
                        "learnable_scales": learnable_scales,
                        "corr_radius": corr_radius, "corr_dirs": corr_dirs,
-                       "train_hw": list(train_hw) if train_hw else None}
+                       "train_hw": list(train_hw) if train_hw else None,
+                       "edge_correction": edge_correction}
         # The frame size the LoG bank was fitted at. A movie of a different size
         # presents cells at a different number of pixels across, so infer brings
         # it here before the forward pass.
@@ -61,7 +63,8 @@ class SpatialSegmenter(nn.Module):
             use_structural=use_structural, use_max=use_max,
             use_variance=use_variance, use_correlation=use_correlation,
             learnable_scales=learnable_scales,
-            corr_radius=corr_radius, corr_dirs=corr_dirs)
+            corr_radius=corr_radius, corr_dirs=corr_dirs,
+            edge_correction=edge_correction)
 
         k = len(radii_px)
         n_groups = use_structural + use_max + use_variance + use_correlation

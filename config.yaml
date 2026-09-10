@@ -108,6 +108,14 @@ train_spatial:
   epochs: 100                                   # training epochs
   val_frac: 0.2                                # fraction of recordings held out for validation
   holdout: true                                # hold out val_frac to evaluate; false = train final model on all data
+  edge_correction: "zeros"                     # how the ∇²G bank reads the frame edge, where part of the kernel
+                                               # falls outside the recording:
+                                               #   zeros           - fill with 0, so the tissue is read against a
+                                               #                     cliff the height of the baseline (torch default)
+                                               #   mean_fill       - fill with the frame mean, removing that step
+                                               #   mean_fill_gain  - and rescale by the kernel energy that reached
+                                               #                     real pixels, restoring an edge cell's amplitude
+                                               # Stamped into the checkpoint and reused by infer.
 
 # Group analysis - cross-recording statistics + genotype/day figures
 analysis:

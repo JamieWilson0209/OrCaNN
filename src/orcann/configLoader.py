@@ -146,6 +146,8 @@ class TrainSpatialParams:
     epochs: int = 30
     val_frac: float = 0.2
     holdout: bool = True
+    # How the edge of a frame is read; travels with the model into infer.
+    edge_correction: str = "zeros"
 
 
 # --- group analysis (calcium) -------------------------------------------------
@@ -442,6 +444,7 @@ _FIELD_DOC = {
     "train_spatial.fg_frac": "fraction of those centred on an annotated cell -- advanced, change only with a measured reason",
     "train_spatial.n_energy_frames": "frames pooled per forward pass, null = every frame; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.epochs": "training epochs",
+    "train_spatial.edge_correction": "how the frame edge is read: zeros | mean_fill | mean_fill_gain; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.val_frac": "fraction of recordings held out for validation",
     "train_spatial.holdout": "hold out val_frac to evaluate; false = train final model on all data",
     "analysis.mutant_label": "legend label for the non-control genotype",

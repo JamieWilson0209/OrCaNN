@@ -31,6 +31,7 @@ class SpatialScatterDetector(nn.Module):
         max_k: int = 2,
         corr_radius: int = 2,
         corr_dirs: int = 8,
+        edge_correction: str = "zeros",
     ) -> None:
         super().__init__()
         self.config = {"radii_px": list(radii_px),
@@ -38,8 +39,10 @@ class SpatialScatterDetector(nn.Module):
                        "use_structural": use_structural, "use_max": use_max,
                        "use_variance": use_variance, "use_correlation": use_correlation,
                        "max_substrate": max_substrate, "max_k": max_k,
-                       "corr_radius": corr_radius, "corr_dirs": corr_dirs}
-        self.log = ParametricLoG2d(radii_px, learnable_scales=learnable_scales)
+                       "corr_radius": corr_radius, "corr_dirs": corr_dirs,
+                       "edge_correction": edge_correction}
+        self.log = ParametricLoG2d(radii_px, learnable_scales=learnable_scales,
+                                   edge_correction=edge_correction)
         self.use_structural = use_structural
         self.use_max = use_max
         self.use_variance = use_variance

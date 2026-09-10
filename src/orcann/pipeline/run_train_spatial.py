@@ -10,6 +10,7 @@ import os
 
 import numpy as np
 
+from orcann.spatial.detection.laplacian import EDGE_CORRECTIONS
 from orcann.spatial import (
     train_segmenter, load_seg_recording, synthetic_sources,
     predict_prob, best_iou, SegRecording)
@@ -75,6 +76,10 @@ def run(cfg, synthetic=False):
         raise SystemExit(f"train_spatial.n_patch is {t.n_patch}; it must be at least 1")
     if not 0.0 <= t.fg_frac <= 1.0:
         raise SystemExit(f"train_spatial.fg_frac is {t.fg_frac}; it is a fraction, 0 to 1")
+    if t.edge_correction not in EDGE_CORRECTIONS:
+        raise SystemExit(
+            f"train_spatial.edge_correction is {t.edge_correction!r}; it must be "
+            f"one of {', '.join(EDGE_CORRECTIONS)}")
     if t.n_energy_frames is not None and t.n_energy_frames < 1:
         raise SystemExit(
             f"train_spatial.n_energy_frames is {t.n_energy_frames}; it must be at "
@@ -118,12 +123,13 @@ def run(cfg, synthetic=False):
                             patch=t.patch, n_patch=t.n_patch, fg_frac=t.fg_frac,
                             n_energy_frames=t.n_energy_frames,
                             epochs=t.epochs, loader=loader,
+                            edge_correction=t.edge_correction,
                             checkpoint_path=t.checkpoint or None)
 
     metrics = {"channels": list(t.channels), "radii": list(radii),
                "n_train": len(train), "n_val": len(val), "held_out": t.holdout,
                "patch": t.patch, "epochs": t.epochs, "synthetic": bool(synthetic),
-               "name": t.name}
+               "edge_correction": t.edge_correction, "name": t.name}
     if val:
         ious = []
         for s in val:
