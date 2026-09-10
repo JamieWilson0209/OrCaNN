@@ -1,94 +1,184 @@
 # OrCaNN
 
-Finds every cell in a microscope video of lab-grown brain tissue, measures when each one fires, and compares mutant tissue against control.
+Calcium imaging analysis pipeline for brain organoids.
 
-
-Everything below is one real recording, 601 frames at 2 Hz, five minutes of a day-98 organoid.
-
----
-
-## The pipeline
-
-```mermaid
-flowchart LR
-    A[raw movie] --> B[motion<br/>correct]
-    B --> C[infer<br/>GPU]
-    C --> D[segment<br/>CPU]
-    D --> E[activity]
-    E --> F[analysis]
-    C -. cached probability map .-> D
-    style C fill:#1F3864,color:#fff
-    style D fill:#2E7D80,color:#fff
-```
-
-Five restartable stages. The GPU step runs once and its output is cached, so retuning the detection threshold costs nothing.
+Trained and tested on 2Hz data with the fluo-4 indicator. (See acknowledgements)
 
 ---
 
-## 1 · Where are the cells?
+## 1 · What it does
+[1 · What it does](#1--what-it-does) ·
+[2 · Motion correction, traceability & quality control](#2--motion-correction-traceability--quality-control) ·
+[3 · Machine learning inference & segmentation](#3--machine-learning-inference--segmentation) ·
+[4 · Activity trace extraction & transient detection](#4--activity-trace-extraction--transient-detection) ·
+[5 · Analysis](#5--analysis) ·
+[Usage](#usage)
 
-![soma probability over max projection](docs/img/prob_overlay.png)
+Parallel job submission on HPC:
+motion correction, traceability & quality control
+machine learning inference stage produces soma probability map
+segmentation derives cell boundaries from chosen probability threshold
+activity trace extraction and transient detection
+statistical analysis and diagnostics across genotype, time and whole data
 
-*Soma probability, one value per pixel.* A learnable Laplacian-of-Gaussian filter bank runs on every frame; the response is pooled into four temporal moments (mean, robust max, variance, coherence); a small U-Net turns that stack into probability. The variance channel is zero-mean by construction, which is what subtracts the out-of-focus haze that defeats tools built for two-photon microscopy.
-
-![279 detected ROIs](docs/img/overlay.png)
-
-**279 cells.** Threshold the cached map, split touching cells with a centroid-seeded watershed. This overlay is the quality check: one glance, one verdict.
-
----
-
-## 2 · When does each cell fire?
-
-![activity raster and population mean](docs/img/activity_raster.png)
-
-
-
----
-
-## 3 · What the diagnostics say
-
-![global intensity](docs/img/global_intensity.png)
-
-*Whole-field mean fluorescence.* Two features, opposite meanings.
-
-**The slow decline** from 490 to 456 is photobleaching. The rolling baseline absorbs it.
-
-**The twelve sharp transients** are the network. Fast rise, slow decay, regular interval.
-
-The red annotation is the diagnostic's automatic call: *step at frame 22*. It is the onset of the first transient, and it is a **false positive**. That is the design. The module measures, flags, and writes the numbers to `run_info.json`. A human adjudicates. It corrects nothing, because the artefact it screens for (a whole-field intensity step, landing on every cell at once and reading as network synchrony) is indistinguishable from the finding itself.
+config.yaml provides single location for every relevant parameter
+ 
+All data is retained for exploratory analysis and reproducibility
 
 ---
 
-## 4 · Compare
+## 2 · Motion correction, traceability & quality control
 
-Group analysis pools every recording, gates on motion and drift, deduplicates cells, computes event rate, amplitude, pairwise correlation, synchrony and active fraction per recording, then compares genotype and developmental day.
+NoRMCorre motion correction ([Pnevmatikakis & Giovannucci 2017](https://doi.org/10.1016/j.jneumeth.2017.07.031)) with shift data retained for excess motion exclusion, controllable in config.
 
-One rule holds the statistics up: **the organoid line is the experimental unit**, not the recording. Four recordings of one organoid are one sample.
+Every stage writes into a folder named for the stage and the run key -
+`<stage>_outputs_<key>` - so a result is found by the name of the experiment that
+made it. `run.key` in config names the run; re-running a key overwrites it.
+
+Beside each output is a record of the settings it was made under, plus a link to
+the record of the stage above. A stage recomputes only the recordings whose
+settings have moved, so changing the segmentation threshold re-runs segment,
+activity and analysis and leaves the GPU stage alone. The settings a stage is
+keyed on exclude the run key, so an earlier run's output made under the same
+settings is reused.
+
+The chain is keyed on what changes the output: infer is keyed on
+the model's content digest, since `models.spatial: latest`
+resolves to a different model over time.
+
+    orcann status --config config.yaml     what is current
+    orcann runs   --config config.yaml     which run keys exist, and how far each got
+
+*Outputs*
+OrCaNN/data/pre_processed/motion_correction_outputs_<key>/:
+    <recording_name>.json
+    <recording_name>_shifts.npy
+    <recording_name>.tif
+
+---
+
+## 3 · Machine learning inference & segmentation
+
+Analytical head feeding a U-Net for per-pixel soma probability.
+
+
+<video src="docs/img/training_progress.mp4" controls muted loop width="512"></video>
+
+Separation of adjacent cells relies on a reduced probability boundary between them and is controlled by the spatial detection threshold in config (0.3 default is conservative). 
+
+*Outputs*
+
+OrCaNN/results/infer/infer_outputs_<key>/:
+    <recording_name>/:
+        max_projection.npy
+        meta.json
+        prob.npy
+        prob_overlay.png
+
+
+OrCaNN/results/spatial/segment_outputs_<key>/:
+    <recording_name>/data/:
+        centroids.npy
+        labels.npy
+        max_projection.npy
+        meta.json
+        traces.npy
+    <recording_name>/figures/:
+        overlay.png                         # Segmentation overlay, output controlled in config - Spatial QC figure written by segment
 
 
 ---
 
-## Limits
+## 4 · Activity trace extraction & transient detection
 
-- Absolute event rate on Fluo-4 is **uncalibrated**. Compare relatively.
-- Detection is validated against **manual annotation**, not a public benchmark. None exists for this modality.
-- **No sub-frame timing** at 2 Hz. Durations are characteristic timescales: faithful in order, indicative in seconds.
-- **Neuropil correction is off.** Its geometric assumptions do not hold in an organoid.
-- The event gate is **weighted towards precision**. 
+Segmented ROIs passed to activity for trace extraction and transient detection
+
+Supports OASIS ([Friedrich, Zhou & Paninski 2017](https://doi.org/10.1371/journal.pcbi.1005423)) transient detection or 'robust' method for low acquisition rate data
+
+*Outputs*
+
+OrCaNN/results/activity/activity_outputs_<key>/:
+    <recording_name>/:
+        gallery.html                        # Interactive viewer for diagnostics and verification, highly compressed to minimize data load
+        global_intensity.png
+        run_info.json
+
+        data/:
+            deconv_censored.npy
+            deconv_noise.npy
+            max_projection.npy
+            mean_projection.npy
+            motion_shifts.npy
+            spatial_footprints.npz
+            spike_trains.npy
+            temporal_traces.npy
+            temporal_traces_raw.npy
+            traces_denoised.npy
+
+Every ROI is inspectable against six background projections, with its own metrics,
+calcium trace and event count, and a cell list sortable by activity. Two recordings
+from the same day - one sparse, one dense:
+
+![ROI viewer, 40 cells detected, 8 active](docs/img/gallery_roi_viewer.png)
+
+![ROI viewer, 149 cells detected, 6 active](docs/img/gallery_roi_viewer_dense.png)
+
+---
+## 5 · Analysis
+
+Statistical analysis module - all data it uses comes from the exposed outputs of previous stages
+
+Provides:
+Selected traces
+Full overview
+Activity analysis
+Genotype comparisons
+Diagnostics and metrics
+
+See analysis documentation for more detail
+
 
 ---
 
-## Run
+## Usage
 
-```bash
-source hpc/config.sh
-bash hpc/submit.sh motion_correct config.yaml
-bash hpc/submit.sh infer          config.yaml
-bash hpc/submit.sh segment        config.yaml
-bash hpc/submit.sh activity       config.yaml
-qsub -v CONFIG=config.yaml hpc/jobs/analysis.sh
-```
+1. Clone the package locally, then put it on the cluster. Wherever it lands is
+   the workspace - there is no separate `src/` copy and no tree to build:
 
-One YAML file holds every path, model and threshold. `orcann train_spatial --synthetic` self-tests with no data and no GPU.
+    ```bash
+    git clone <repo-url> OrCaNN
+    rsync -av --exclude .git OrCaNN/ <user>@eddie.ecdf.ed.ac.uk:/exports/eddie/scratch/<user>/OrCaNN/
+    ```
 
-Full setup: docs/README.md · [`hpc/README_HPC.md`](hpc/README_HPC.md)
+2. One time HPC environment setup, on a login node:
+
+    ```bash
+    cd /exports/eddie/scratch/<user>/OrCaNN
+    source hpc/config.sh    # edit conda-env / module names first if needed
+    bash   hpc/setup.sh     # builds both envs: torch, and caiman for motion correction + activity
+    ```
+
+3. Upload data to OrCaNN/data/raw/
+
+4. Check the config meets your requirements:
+    Frame rate is the only mandatory check, transient detection settings are most dependant on frame rate
+
+5. Submit the whole pipeline from a login node. It asks the pipeline what is
+   already there, submits only the stages with work to do, and chains them so
+   each starts when the one above it finishes:
+
+    ```bash
+    bash hpc/run_all.sh --dry-run    # print the plan without queueing anything
+    bash hpc/run_all.sh              # motion correction -> infer -> segment -> activity -> analysis
+    ```
+
+   `--key NAME` names the run's outputs; `run.notify_email` in config is mailed
+   when the last stage ends.
+
+
+## acknowledgements
+
+Created in collaboration with:
+
+Theil lab, University of Edinburgh
+Chun Lim, University of Edinburgh - Provided the manually annotated training data for the available model

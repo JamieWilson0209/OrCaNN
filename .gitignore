@@ -45,7 +45,6 @@ env/
 *.pkl
 *.pickle
 *.zip
-*.mp4
 *.avi
 
 # --- SGE / Grid Engine job logs (real cluster run output) ---
