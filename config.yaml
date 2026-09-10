@@ -12,6 +12,12 @@
 # one gets its own key.
 run:
   key: "main"   # names every output of this run: <stage>_outputs_<key>
+  notify_email: null   # mailed when a run_all chain finishes: hpc/run_all.sh asks SGE
+                       # to write here when the LAST stage ends or aborts, so one
+                       # message arrives per run and not one per array task. Grid
+                       # Engine's own default is the job owner at the submitting
+                       # host, which is not a deliverable address, so this has to
+                       # be spelled out. null = ask for no mail.
 
 # Workspace layout: where recordings live and where results are written.
 # Every path below raw is a ROOT, not an output folder. Each stage writes into a

@@ -4,6 +4,10 @@
 #
 #   bash hpc/run_all.sh [--key NAME] [--config config.yaml] [--dry-run]
 #
+# Set run.notify_email in the config to be mailed when the run finishes. It is
+# attached to the analysis job alone -- the last thing in the chain -- so one
+# message arrives per run, not one per array task.
+#
 # It asks the pipeline what is already there (`orcann status --json`), submits
 # only the stages with work to do, and chains them with -hold_jid so each starts
 # when the one above it has finished:
@@ -83,6 +87,15 @@ SNAPSHOT="$(orcann snapshot --config "${CONFIG}" ${SET_KEY[@]+"${SET_KEY[@]}"})"
 RUN_DIR="$(dirname "${SNAPSHOT}")"
 RUN_KEY="$(basename "${RUN_DIR}")"
 mkdir -p "${RUN_DIR}/logs"
+
+# Read from the snapshot, not from config.yaml: a run that sits in the queue for
+# a day mails whoever the config named when it was submitted, which is the same
+# guarantee the snapshot gives every other setting.
+NOTIFY=$(python -c '
+import sys
+from orcann.configLoader import Config
+print(Config.load(sys.argv[1]).run.notify_email or "")
+' "${SNAPSHOT}")
 
 # One tab-separated line per stage, in pipeline order:
 #   <stage>  <n_recordings>  <n_todo>  <blocked reason | ->
@@ -164,10 +177,15 @@ IFS=$'\t' read -r _ an atodo ablocked <<<"$(printf "%s\n" "${PLAN}" | awk -F"\t"
 if [ "${ablocked}" = "-" ] && [ "${atodo}" -eq 0 ] && [ "${an}" -gt 0 ] && [ "${QUEUED}" -eq 0 ]; then
     printf "%-18s current for %s recording(s), not submitted\n" "analysis" "${an}"
 elif [ "${DRY}" -eq 1 ]; then
-    printf "%-18s would submit\n" "analysis"
+    printf "%-18s would submit%s\n" "analysis" \
+           "${NOTIFY:+  (mails ${NOTIFY} on end/abort)}"
 else
     QSUB=(qsub -terse -v CONFIG="${SNAPSHOT}",EXPECTED_N="${N}"
           -o "${RUN_DIR}/logs" -e "${RUN_DIR}/logs")
+    # -m ea, not -m e: the chain's failure policy is continue-and-report, so a
+    # run that dies rather than finishing is exactly the one worth being told
+    # about. Only this job carries it -- on an array, -m mails per task.
+    [ -n "${NOTIFY}" ] && QSUB+=(-m ea -M "${NOTIFY}")
     [ -n "${HOLD}" ] && QSUB+=(-hold_jid "${HOLD}")
     ID=$("${QSUB[@]}" "$(crlf_safe_job "hpc/jobs/analysis.sh")")
     ID="${ID%%.*}"
@@ -191,3 +209,6 @@ echo "watch:   qstat -u \$USER"
 echo "cancel:  qdel ${IDS}"
 echo "logs:    ${RUN_DIR}/logs"
 echo "state:   orcann status --config ${SNAPSHOT}"
+if [ -n "${NOTIFY}" ]; then
+    echo "mail:    ${NOTIFY}  when analysis ends or aborts"
+fi

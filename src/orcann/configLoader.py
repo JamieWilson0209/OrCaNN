@@ -36,6 +36,9 @@ class Run:
     # it. What a stage may reuse is decided by the key recorded beside each
     # output, not by this string -- see orcann/pipeline/provenance.py.
     key: str = "main"
+    # Where hpc/run_all.sh asks SGE to mail when the chain's last stage ends.
+    # Only that job carries the request: on an array, -m mails once per task.
+    notify_email: Optional[str] = None
 
 
 # --- workspace layout + trained model ----------------------------------------
@@ -397,6 +400,7 @@ _SECTION_DOC = {
 
 _FIELD_DOC = {
     "run.key": "names every output of this run: <stage>_outputs_<key>",
+    "run.notify_email": "address SGE mails when a run_all chain's last stage ends or aborts; null asks for no mail",
     "paths.raw": "recordings to process (.nd2 / .tif / .npy)",
     "paths.pre_processed": "motion-corrected movies (motion_correction output, infer input)",
     "paths.infer": "cached probability maps (infer output, segment input)",
@@ -446,9 +450,9 @@ _FIELD_DOC = {
     "train_spatial.n_patch": "patches sampled per recording per epoch -- advanced, change only with a measured reason",
     "train_spatial.fg_frac": "fraction of those centred on an annotated cell -- advanced, change only with a measured reason",
     "train_spatial.n_energy_frames": "frames pooled per forward pass, null = every frame; travels with the model into infer -- advanced, change only with a measured reason",
+    "train_spatial.edge_correction": "how the frame edge is read: zeros | mean_fill | mean_fill_gain; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.epochs": "training epochs",
     "train_spatial.progress_frames": "write a prediction overlay per tapering epoch schedule into <out>/<name>_progress, for assembling into a series afterwards",
-    "train_spatial.edge_correction": "how the frame edge is read: zeros | mean_fill | mean_fill_gain; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.val_frac": "fraction of recordings held out for validation",
     "train_spatial.holdout": "hold out val_frac to evaluate; false = train final model on all data",
     "analysis.mutant_label": "legend label for the non-control genotype",
