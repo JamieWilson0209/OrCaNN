@@ -61,7 +61,6 @@ def run_analysis(
     motion_max_threshold: float = 15.0,
     motion_residual_threshold: float = 2.0,
     drift_threshold: float = 1.0,
-    inactive_file: Optional[str] = None,
     min_roi_distance: float = 15.0,
     roi_peak_figures: bool = False,
     mutant_label: str = 'CEP41 R242H',
@@ -82,12 +81,6 @@ def run_analysis(
         Datasets with population-median baseline drift ratio above this
         are excluded.  Drift ratio = |mean(Q4) - mean(Q1)| / std(trace),
         measured on raw fluorescence of selected neurons.  Default 1.0.
-    inactive_file : str, optional
-        Path to a text file listing dataset names (one per line) that were
-        visually confirmed to have no activity.  These datasets are kept
-        in the results but marked as inactive — all spikes are zeroed,
-        active fraction set to 0, and they appear in figures with a
-        distinct annotation.  Lines starting with # are ignored.
 
     Returns dict with datasets, features, and analysis results.
     """
@@ -95,18 +88,6 @@ def run_analysis(
     
     os.makedirs(output_dir, exist_ok=True)
     results_path = Path(results_dir)
-
-    # ── Load inactive dataset list ───────────────────────────────────────
-    inactive_names = set()
-    if inactive_file and os.path.isfile(inactive_file):
-        with open(inactive_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    inactive_names.add(line)
-        logger.info(f"Loaded {len(inactive_names)} inactive datasets from {inactive_file}")
-    elif inactive_file:
-        logger.warning(f"Inactive file not found: {inactive_file}")
 
     # ── Load all datasets ────────────────────────────────────────────────
     logger.info(f"Loading datasets from {results_dir}")
@@ -129,41 +110,6 @@ def run_analysis(
         return {}
 
     logger.info(f"\nLoaded {len(all_datasets)} datasets")
-
-    # ── Mark manually inactive datasets ──────────────────────────────────
-    # Datasets visually confirmed to have no activity. The spike-derived
-    # fields are zeroed and the recording is kept, so it still counts in the
-    # cohort demographics. Its correlation, synchrony, IEI and burst fields are
-    # left as measured, which is why a reader comparing them against a zeroed
-    # spike rate will see the two disagree.
-    n_marked_inactive = 0
-    for ds in all_datasets:
-        # Substring in either direction, so a list entry may be shorter or
-        # longer than the folder name. It is broad: an entry of "D115" marks
-        # every recording from that day, both genotypes included.
-        is_inactive = (ds.name in inactive_names or
-                       any(iname in ds.name or ds.name in iname 
-                           for iname in inactive_names))
-        if is_inactive:
-            ds.n_active = 0
-            ds.active_fraction = 0.0
-            if ds.neuron_is_active is not None:
-                ds.neuron_is_active[:] = False
-            if ds.neuron_spike_rates is not None:
-                ds.neuron_spike_rates[:] = 0.0
-            if ds.neuron_spike_amplitudes is not None:
-                ds.neuron_spike_amplitudes[:] = 0.0
-            ds.mean_spike_rate = 0.0
-            ds.median_spike_rate = 0.0
-            ds.mean_spike_amplitude = 0.0
-            ds.manually_inactive = True
-            n_marked_inactive += 1
-            logger.info(f"  Marked as inactive (no visible activity): {ds.name}")
-        else:
-            ds.manually_inactive = False
-
-    if n_marked_inactive > 0:
-        logger.info(f"  Total manually inactive: {n_marked_inactive}/{len(all_datasets)}")
 
     # ── Quality gating (motion + baseline drift) ──────────────────────────
     logger.info(f"\nQuality gating (max_shift<={motion_max_threshold}px, "
@@ -289,7 +235,7 @@ def run_analysis(
         writer.writerow([
             'dataset', 'roi_index', 'quality_score', 'is_active',
             'n_spikes', 'spike_rate_per_10s', 'mean_amplitude',
-            'genotype', 'organoid_day', 'manually_inactive',
+            'genotype', 'organoid_day',
         ])
         for ds in datasets:
             geno = _extract_genotype(ds.name)
@@ -305,7 +251,7 @@ def run_analysis(
                 writer.writerow([
                     ds.name, roi_idx, f'{q:.3f}', is_active,
                     n_spk, f'{rate:.2f}', f'{amp:.4f}',
-                    geno, day, ds.manually_inactive,
+                    geno, day,
                 ])
     logger.info(f"Saved selected ROI listing: {roi_csv_path}")
 

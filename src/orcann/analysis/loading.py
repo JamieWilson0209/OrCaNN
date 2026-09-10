@@ -157,7 +157,6 @@ class DatasetMetrics:
     genotype: str = ''                 # 'Control', 'Mutant', or 'Unknown'
     
     # Manual override
-    manually_inactive: bool = False    # True if visually confirmed no activity
     line_id: str = ''                  # e.g. '3-63', '1-12'
 
 

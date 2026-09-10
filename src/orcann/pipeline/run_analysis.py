@@ -70,7 +70,6 @@ def run(cfg, force=False):
         motion_max_threshold=ap.motion_max_threshold,
         motion_residual_threshold=ap.motion_residual_threshold,
         drift_threshold=ap.drift_threshold,
-        inactive_file=ap.inactive_file,
         min_roi_distance=ap.min_roi_distance,
         roi_peak_figures=ap.roi_peak_figures,
         mutant_label=ap.mutant_label,

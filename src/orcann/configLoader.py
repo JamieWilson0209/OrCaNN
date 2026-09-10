@@ -165,7 +165,6 @@ class AnalysisParams:
     motion_residual_threshold: float = 2.0  # QC: residual motion (px) tolerated per recording
     drift_threshold: float = 1.0          # QC: baseline drift tolerated per recording
     roi_peak_figures: bool = False        # also render per-ROI peak montages (slow)
-    inactive_file: Optional[str] = None   # text file of recording ids to mark inactive (one per line)
     dev: bool = False                     # run orcann.dev analyses (unsupported, may change)
 
 
@@ -195,7 +194,6 @@ class Config:
                   "runs"),
         "models": ("dir",),
         "train_spatial": ("movies", "masks", "out", "checkpoint"),
-        "analysis": ("inactive_file",),
     }
 
     # ---- indicator -> decay constant (s), used when
@@ -461,6 +459,5 @@ _FIELD_DOC = {
     "analysis.motion_residual_threshold": "QC: residual motion (px) tolerated per recording",
     "analysis.drift_threshold": "QC: baseline drift tolerated per recording",
     "analysis.roi_peak_figures": "also render per-ROI peak montages (slow)",
-    "analysis.inactive_file": "text file of recording ids to mark inactive (one per line)",
     "analysis.dev": "run the unsupported orcann.dev analyses (off by default)",
 }

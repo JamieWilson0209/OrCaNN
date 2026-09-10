@@ -143,5 +143,4 @@ analysis:
   motion_residual_threshold: 2.0  # QC: residual motion (px) tolerated per recording
   drift_threshold: 1.0            # QC: baseline drift tolerated per recording
   roi_peak_figures: false         # also render per-ROI peak montages (slow)
-  inactive_file: null             # text file of recording ids to mark inactive (one per line)
   dev: false                      # run the unsupported orcann.dev analyses (transient duration; needs deconvolution.method=robust)
