@@ -172,6 +172,23 @@ See analysis documentation for more detail
 
 3. Upload data to OrCaNN/data/raw/
 
+**IMPORTANT: Data naming convention**
+
+Recording names need to take the form:
+
+```
+D(age_in_days)_(control/mutant line)-(cell line number)_(date of recording)_R(recording region)
+```
+
+E.G
+
+```
+D96_3-63_050226_R3     # Control, specified by the first number in the cell line field: 3
+                       # Set that number in analysis.control_line_prefixes
+D96_2-46_050226_R2     # Any other number here specifies mutant
+```
+
+
 4. Check the config meets your requirements:
     Frame rate is the only mandatory check, transient detection settings are most dependant on frame rate
 
