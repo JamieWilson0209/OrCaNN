@@ -16,7 +16,7 @@ import logging
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional, Sequence
 
 import numpy as np
 
@@ -186,6 +186,7 @@ def load_dataset_metrics(
     name: str,
     frame_rate: float,
     min_roi_distance: float = 15.0,
+    control_line_prefixes: Sequence[str] = ("3",),
 ) -> Optional[DatasetMetrics]:
     """Load pipeline outputs, score neuron quality, select by threshold.
 
@@ -527,7 +528,7 @@ def load_dataset_metrics(
         mean_quality_score=float(np.mean(roi_snr)),
         frame_rate=frame_rate,
         n_frames=T, duration_seconds=duration,
-        genotype=_extract_genotype(name),
+        genotype=_extract_genotype(name, _genotype_map(control_line_prefixes)),
         line_id=_extract_line_id(name),
     )
 
@@ -643,6 +644,15 @@ def _extract_organoid_id(name: str) -> str:
         return parts[0].upper()
     return _abbrev(name)
 
+
+
+def _genotype_map(control_line_prefixes: Sequence[str]) -> dict:
+    """``{prefix: 'Control'}`` for the configured control lines, everything else
+    the mutant. analysis.control_line_prefixes is the single place this is
+    decided; nothing infers a genotype from anywhere else."""
+    m = {str(p): 'Control' for p in control_line_prefixes}
+    m['default'] = 'Mutant'
+    return m
 
 
 def _extract_genotype(name: str, genotype_map: dict = None) -> str:

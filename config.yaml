@@ -138,6 +138,11 @@ train_spatial:
 # Group analysis - cross-recording statistics + genotype/day figures
 analysis:
   mutant_label: "CEP41 R242H"     # legend label for the non-control genotype
+  control_line_prefixes: ["3"]    # cell lines that are CONTROL, by the prefix of the line field
+                                  # in a recording name: D109_3-63_040226_R1 -> line 3-63 -> prefix 3.
+                                  # Any prefix not listed here is the mutant genotype, labelled
+                                  # mutant_label above. A name whose line field cannot be parsed is
+                                  # Unknown and is excluded from the genotype comparison.
   min_roi_distance: 5.0          # dedupe ROIs whose centroids are closer than this (px)
   motion_max_threshold: 15.0      # QC: max motion shift (px) tolerated per recording
   motion_residual_threshold: 2.0  # QC: residual motion (px) tolerated per recording

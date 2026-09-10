@@ -27,7 +27,7 @@ from sklearn.preprocessing import StandardScaler
 
 from ..analysis.loading import (
     DatasetMetrics, FEATURE_NAMES, _abbrev,
-    _extract_organoid_id, _extract_genotype,
+    _extract_organoid_id,
     _trace_snr,
 )
 from ..analysis.metrics import (
@@ -833,7 +833,7 @@ def fig_selected_traces(datasets: List[DatasetMetrics], output_dir: str) -> List
         axes[-1].set_xlim(0, duration_s)
 
         # ── Title and caption ────────────────────────────────────────
-        genotype = _extract_genotype(ds.name)
+        genotype = ds.genotype
         geno_str = f'  [{genotype}]' if genotype != 'Unknown' else ''
         n_active = int(np.sum(is_active))
 
@@ -922,7 +922,7 @@ def fig_n_selected_distribution(datasets: List, output_dir: str,
         group_xs = []
 
         for ds in recs:
-            geno  = _extract_genotype(ds.name)
+            geno  = ds.genotype
             color = CTRL_COLOR if geno == 'Control' else MUT_COLOR
             n_sel = ds.n_selected
             n_uns = max(0, ds.n_neurons - n_sel)
@@ -973,8 +973,8 @@ def fig_n_selected_distribution(datasets: List, output_dir: str,
     ax.set_ylim(0, max_bar + space_above)
 
     # Legend
-    n_ctrl  = sum(1 for ds in datasets if _extract_genotype(ds.name) == 'Control')
-    n_mut   = sum(1 for ds in datasets if _extract_genotype(ds.name) == 'Mutant')
+    n_ctrl  = sum(1 for ds in datasets if ds.genotype == 'Control')
+    n_mut   = sum(1 for ds in datasets if ds.genotype == 'Mutant')
     handles = [
         mpatches.Patch(facecolor=CTRL_COLOR,  label=f'Control — active  ({n_ctrl} recordings)'),
         mpatches.Patch(facecolor=MUT_COLOR,   label=f'{mutant_label} — active   ({n_mut} recordings)'),

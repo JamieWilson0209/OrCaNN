@@ -160,6 +160,8 @@ class TrainSpatialParams:
 @dataclass
 class AnalysisParams:
     mutant_label: str = "CEP41 R242H"     # legend label for the non-control genotype
+    # Line-field prefixes that mean control; every other prefix is the mutant.
+    control_line_prefixes: Tuple[str, ...] = ("3",)
     min_roi_distance: float = 15.0        # dedupe ROIs whose centroids are closer than this (px)
     motion_max_threshold: float = 15.0    # QC: max motion shift (px) tolerated per recording
     motion_residual_threshold: float = 2.0  # QC: residual motion (px) tolerated per recording
@@ -453,6 +455,7 @@ _FIELD_DOC = {
     "train_spatial.progress_frames": "write a prediction overlay per tapering epoch schedule into <out>/<name>_progress, for assembling into a series afterwards",
     "train_spatial.val_frac": "fraction of recordings held out for validation",
     "train_spatial.holdout": "hold out val_frac to evaluate; false = train final model on all data",
+    "analysis.control_line_prefixes": "cell-line prefixes that are control; any other prefix is the mutant genotype",
     "analysis.mutant_label": "legend label for the non-control genotype",
     "analysis.min_roi_distance": "dedupe ROIs whose centroids are closer than this (px)",
     "analysis.motion_max_threshold": "QC: max motion shift (px) tolerated per recording",

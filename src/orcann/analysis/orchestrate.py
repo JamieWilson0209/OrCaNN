@@ -14,7 +14,7 @@ import json
 import logging
 import csv
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional, Sequence
 
 # Redirect matplotlib cache to scratch (HPC home quota is often limited).
 if 'MPLCONFIGDIR' not in os.environ:
@@ -29,7 +29,7 @@ from ..stage_report import StageReport
 from ..run_info import dump as dump_json
 from .loading import (
     DatasetMetrics, FEATURE_NAMES,
-    load_dataset_metrics, _extract_genotype, _extract_organoid_id,
+    load_dataset_metrics, _extract_organoid_id,
 )
 from .metrics import build_feature_matrix
 from .stats import (
@@ -62,6 +62,7 @@ def run_analysis(
     motion_residual_threshold: float = 2.0,
     drift_threshold: float = 1.0,
     min_roi_distance: float = 15.0,
+    control_line_prefixes: Sequence[str] = ("3",),
     roi_peak_figures: bool = False,
     mutant_label: str = 'CEP41 R242H',
     dev: bool = False,
@@ -101,6 +102,7 @@ def run_analysis(
             str(subdir), subdir.name,
             frame_rate=frame_rate,
             min_roi_distance=min_roi_distance,
+            control_line_prefixes=control_line_prefixes,
         )
         if ds is not None:
             all_datasets.append(ds)
@@ -238,7 +240,7 @@ def run_analysis(
             'genotype', 'organoid_day',
         ])
         for ds in datasets:
-            geno = _extract_genotype(ds.name)
+            geno = ds.genotype
             day = _extract_organoid_id(ds.name)
             n_sel = ds.n_selected
             for j in range(n_sel):

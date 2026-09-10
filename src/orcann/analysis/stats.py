@@ -41,7 +41,7 @@ from matplotlib.lines import Line2D
 from ..run_info import read as read_run_info, RunInfoError
 from .loading import (
     DatasetMetrics, FEATURE_NAMES, _abbrev,
-    _extract_organoid_id, _extract_genotype, _extract_line_id,
+    _extract_organoid_id, _extract_line_id,
 )
 from .metrics import (
     _get_neuron_rates, _get_neuron_amplitudes, _recording_metric,
@@ -475,7 +475,7 @@ def run_genotype_comparison(datasets: List[DatasetMetrics], output_dir: str,
     os.makedirs(geno_dir, exist_ok=True)
 
     # ── Parse genotypes ──────────────────────────────────────────────────
-    genotypes = [_extract_genotype(ds.name) for ds in datasets]
+    genotypes = [ds.genotype for ds in datasets]
     organoid_ids = [_extract_organoid_id(ds.name) for ds in datasets]
     line_ids = [_extract_line_id(ds.name) for ds in datasets]
 
@@ -1497,7 +1497,7 @@ def run_activity_analysis(datasets: List[DatasetMetrics], output_dir: str,
     os.makedirs(activity_dir, exist_ok=True)
 
     # ── Parse metadata ───────────────────────────────────────────────────
-    genotypes = [_extract_genotype(ds.name) for ds in datasets]
+    genotypes = [ds.genotype for ds in datasets]
     organoid_ids = [_extract_organoid_id(ds.name) for ds in datasets]
 
     # Sort organoid days by numeric age

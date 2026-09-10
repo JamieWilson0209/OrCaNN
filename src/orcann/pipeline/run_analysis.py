@@ -71,6 +71,7 @@ def run(cfg, force=False):
         motion_residual_threshold=ap.motion_residual_threshold,
         drift_threshold=ap.drift_threshold,
         min_roi_distance=ap.min_roi_distance,
+        control_line_prefixes=ap.control_line_prefixes,
         roi_peak_figures=ap.roi_peak_figures,
         mutant_label=ap.mutant_label,
         # analysis.dev gates orcann.dev; the deconvolution settings ride along
