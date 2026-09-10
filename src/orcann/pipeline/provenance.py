@@ -109,7 +109,13 @@ def _fields(section) -> Dict[str, object]:
 # version and commit are recorded beside every record, but deliberately not in
 # the key, because invalidating a GPU cohort on a comment change is worse than
 # the gap this leaves.
-MOTION_VERSION = 1
+# 2: the motion QC statistics were being computed from the elastic worst-patch
+#    summary rather than from a whole-frame trajectory. max_shift_* and the
+#    saved _shifts.npy now come from shifts_rig; the border crop still comes
+#    from the worst patch, which is what it wants. The corrected movies are
+#    unchanged -- same NoRMCorre call, same crop -- but the recorded motion
+#    metadata is not, and the QC gate downstream reads it.
+MOTION_VERSION = 2
 INFER_VERSION = 1
 SEGMENT_VERSION = 1
 ACTIVITY_VERSION = 1

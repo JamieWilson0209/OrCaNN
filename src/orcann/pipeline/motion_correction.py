@@ -30,7 +30,7 @@ class MotionCorrectionResult:
     correlations: np.ndarray           # (T,) frame-to-template correlation
     mode: str = 'rigid'                # mode requested
     applied_mode: str = 'rigid'        # mode actually delivered (may be weaker)
-    shift_source: str = 'rigid'        # field the (T,2) shifts were derived from
+    shift_source: str = 'rigid'        # field the border crop was sized from
     max_shift_y: float = 0.0
     max_shift_x: float = 0.0
     mean_shift_y: float = 0.0
@@ -55,29 +55,20 @@ class MotionCorrectionResult:
         }
 
 
-def _per_frame_shifts(mc, mode: str, T: int):
-    """Per-frame [dy, dx] displacement, and the field it was derived from.
+def _crop_extent(mc, mode: str):
+    """``(T, 2)`` per-axis worst patch displacement, for sizing the border crop.
 
-    Rigid correction has one shift per frame and this is unambiguous.  Elastic
-    (piecewise-rigid) correction has no single per-frame shift: NoRMCorre
-    produces ``y_shifts_els`` / ``x_shifts_els``, each (T, n_patches).  Three
-    downstream consumers need a (T, 2) summary of it, and all three want the
-    same statistic — the **worst patch in each frame**:
+    The crop must be sized by the largest incursion **anywhere** in the frame or
+    border pixels survive it, carrying the false-zero contamination of baseline,
+    dF/F and quality scores that the crop exists to prevent. Elastic correction
+    has no single per-frame shift -- NoRMCorre gives ``y_shifts_els`` /
+    ``x_shifts_els`` as (T, n_patches) -- so each frame reports the patch of
+    largest magnitude per axis, which is the worst-case the crop asks for.
 
-    * the border crop must be sized by the largest incursion anywhere in the
-      frame, or border pixels survive it;
-    * ``motion_max_threshold`` QC asks how far the sample moved, which is a
-      worst-case question;
-    * the saved ``_shifts.npy`` is read as "how bad was motion here".
-
-    So each frame reports the patch displacement of largest magnitude, per axis.
-    ``mean_shift_*`` derived from this is therefore a mean of per-frame maxima —
-    conservative by construction, which is the right bias for a QC gate.
-
-    Raises RuntimeError if no usable shift information exists.  Returning zeros
-    would be worse than failing: every consumer reads an all-zero array as
-    "this recording did not move", so the recording with unknown motion would
-    be the one most confidently certified clean.
+    Only the magnitude of this is ever read. It is emphatically NOT a
+    trajectory: the patch that wins the argmax changes from frame to frame, so
+    the signed sequence jumps between opposite edges of the field. Motion QC
+    needs a trajectory and takes one from :func:`_qc_trajectory` instead.
     """
     def _extreme(field):
         """(T, n_patches) -> (T,) the value of largest magnitude per row."""
@@ -91,11 +82,11 @@ def _per_frame_shifts(mc, mode: str, T: int):
         y_els = getattr(mc, 'y_shifts_els', None)
         x_els = getattr(mc, 'x_shifts_els', None)
         if y_els is not None and x_els is not None and len(y_els) and len(x_els):
-            shifts = np.stack([_extreme(y_els), _extreme(x_els)], axis=1)
-            return shifts, 'elastic'
+            return np.stack([_extreme(y_els), _extreme(x_els)], axis=1), 'elastic'
         logger.warning(
             "  Piecewise-rigid requested but NoRMCorre exposed no elastic shift "
-            "fields — falling back to the rigid shifts for crop sizing and QC")
+            "fields — sizing the border crop from the rigid shifts, which "
+            "undersizes it wherever a patch moved further than the whole frame")
 
     shifts_rig = getattr(mc, 'shifts_rig', None)
     if shifts_rig is not None and len(shifts_rig):
@@ -103,8 +94,38 @@ def _per_frame_shifts(mc, mode: str, T: int):
 
     raise RuntimeError(
         "NoRMCorre produced no usable shifts (neither elastic fields nor "
-        "shifts_rig) — motion correction cannot be verified, so the border crop "
-        "and the motion QC gates would both be computed from nothing.")
+        "shifts_rig) — the border crop would be sized from nothing.")
+
+
+def _qc_trajectory(mc, T: int):
+    """``(T, 2)`` per-frame whole-frame displacement, for the motion QC gates.
+
+    ``shifts_rig``, which NoRMCorre populates from the rigid pass it runs to
+    build the template even when the requested mode is piecewise-rigid. This is
+    a continuous signed trajectory: one displacement per frame that the whole
+    field underwent, so differencing it measures frame-to-frame jitter and its
+    per-axis extremes come from the same moving sample.
+
+    The elastic worst-patch summary cannot serve here. Its argmax changes
+    between frames, so ``np.diff`` of it measures which patch happened to win
+    rather than how much anything moved, and its two axis maxima can come from
+    different frames and different patches -- a pair that describes no
+    displacement the sample ever underwent.
+
+    Raises rather than returning zeros: every consumer reads an all-zero array
+    as "this recording did not move", so the recording with unknown motion
+    would be the one most confidently certified clean.
+    """
+    shifts_rig = getattr(mc, 'shifts_rig', None)
+    if shifts_rig is None or not len(shifts_rig):
+        raise RuntimeError(
+            "NoRMCorre exposed no shifts_rig, so there is no whole-frame "
+            "trajectory to evaluate the motion QC gates against. Correction "
+            "cannot be verified and the recording must not be certified clean.")
+    traj = np.array([[s[0], s[1]] for s in shifts_rig], dtype=np.float64)
+    if len(traj) != T:
+        logger.warning(f"  shifts_rig has {len(traj)} rows for {T} frames")
+    return traj
 
 
 def _resolve_tmpdir() -> str:
@@ -403,9 +424,12 @@ def _run_normcorre(
                 ).astype(np.float32)
             logger.info(f"  Applied {T} frame shifts manually")
 
-        # Extract shifts. For elastic correction this summarises the patch
-        # field; see _per_frame_shifts for why it is the per-frame extreme.
-        shifts, shift_source = _per_frame_shifts(mc, mode, T)
+        # Two summaries of the same field, because the two consumers ask
+        # different questions: the crop wants the worst incursion anywhere,
+        # the QC gates want a trajectory. See both functions for why one
+        # array cannot serve both.
+        crop_field, shift_source = _crop_extent(mc, mode)
+        shifts = _qc_trajectory(mc, T)
         if mode != 'rigid' and shift_source == 'rigid':
             applied_mode = 'rigid'      # elastic field unavailable — recorded
 
@@ -414,9 +438,10 @@ def _run_normcorre(
         # artefacts) or filled with edge values that don't reflect real
         # fluorescence.  Cropping avoids false-zero contamination of
         # baseline, ΔF/F, and quality scores for border ROIs.
+        abs_crop = np.abs(crop_field)
         abs_shifts = np.abs(shifts)
-        crop_y = int(np.ceil(abs_shifts[:, 0].max())) + 1 if len(shifts) > 0 else 0
-        crop_x = int(np.ceil(abs_shifts[:, 1].max())) + 1 if len(shifts) > 0 else 0
+        crop_y = int(np.ceil(abs_crop[:, 0].max())) + 1 if len(crop_field) > 0 else 0
+        crop_x = int(np.ceil(abs_crop[:, 1].max())) + 1 if len(crop_field) > 0 else 0
 
         if crop_y > 0 or crop_x > 0:
             old_shape = corrected.shape
