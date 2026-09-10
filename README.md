@@ -65,7 +65,9 @@ OrCaNN/data/pre_processed/motion_correction_outputs_<key>/:
 Analytical head feeding a U-Net for per-pixel soma probability.
 
 
-<video src="docs/img/training_progress.mp4" controls muted loop width="512"></video>
+![soma probability through training, epochs 0 to 299](docs/img/training_progress.gif)
+
+Full resolution, as mp4: [training_progress.mp4](docs/img/training_progress.mp4)
 
 Separation of adjacent cells relies on a reduced probability boundary between them and is controlled by the spatial detection threshold in config (0.3 default is conservative). 
 
@@ -185,6 +187,8 @@ See analysis documentation for more detail
    `--key NAME` names the run's outputs; `run.notify_email` in config is mailed
    when the last stage ends.
 
+
+---
 
 ## License
 
