@@ -13,7 +13,7 @@
 #$ -e logs/
 #$ -l h_rt=04:00:00
 #$ -q gpu
-#$ -l gpu=1
+#$ -l gpu-mig=1
 #$ -l h_rss=32G
 
 set -euo pipefail
