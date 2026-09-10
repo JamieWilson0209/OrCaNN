@@ -176,6 +176,12 @@ See analysis documentation for more detail
    when the last stage ends.
 
 
+## License
+
+MIT - see [LICENSE](LICENSE).
+
+---
+
 ## acknowledgements
 
 Created in collaboration with:

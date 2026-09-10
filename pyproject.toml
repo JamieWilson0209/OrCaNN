@@ -1,11 +1,13 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]        # >=77 for PEP 639 license metadata
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "orcann"
 version = "0.2.0"
 description = "Organoid calcium-imaging pipeline: learned soma segmentation, OASIS deconvolution, and group analysis"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
