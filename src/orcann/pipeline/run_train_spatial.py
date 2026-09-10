@@ -119,12 +119,22 @@ def run(cfg, synthetic=False):
     # already gone.
     checkpoint_path = t.checkpoint or None
 
-    def fit(train_i):
+    def fit(train_i, val_i):
+        # Progress frames are named for the run, not for that scratch checkpoint,
+        # whose path defaults to one _in_progress.pt every run overwrites. The
+        # run's own output directory is named for an identity that does not exist
+        # until the fit finishes, which leaves train_spatial.name -- the same
+        # component that identity is built from.
+        progress_dir = None
+        if t.progress_frames:
+            progress_dir = os.path.join(t.out or ".", f"{t.name}_progress")
         return train_segmenter([sources[i] for i in train_i], channels=channels,
                                radii_px=radii, patch=t.patch, n_patch=t.n_patch,
                                fg_frac=t.fg_frac, n_energy_frames=t.n_energy_frames,
                                epochs=t.epochs, loader=loader,
                                edge_correction=t.edge_correction,
+                               val_sources=[sources[i] for i in val_i],
+                               progress_dir=progress_dir,
                                checkpoint_path=checkpoint_path)
 
     def score(model, val_i):
@@ -141,7 +151,7 @@ def run(cfg, synthetic=False):
                   f"{rows[-1]['n_cells']} annotated cells")
         return rows
 
-    model = fit(train_i)
+    model = fit(train_i, val_i)
     per_recording = score(model, val_i)
 
     metrics = {"channels": list(t.channels), "radii": list(radii),

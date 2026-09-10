@@ -6,6 +6,7 @@ See docs/spatial/training.md.
 """
 from __future__ import annotations
 
+import os
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -110,12 +111,16 @@ def train_segmenter(sources, channels: Dict[str, bool],
                     epochs: int = 30, lr: float = 3e-3, hidden: int = 24,
                     n_energy_frames: Optional[int] = 64, seed: int = 0,
                     loader=None, checkpoint_path: Optional[str] = None,
+                    edge_correction: str = "zeros",
+                    val_sources: Optional[Sequence] = None,
+                    progress_dir: Optional[str] = None,
                     device: Optional[torch.device] = None) -> SpatialSegmenter:
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SpatialSegmenter(radii_px=radii_px, hidden=hidden,
-                             n_energy_frames=n_energy_frames, **channels).to(device)
+                             n_energy_frames=n_energy_frames,
+                             edge_correction=edge_correction, **channels).to(device)
     # record the training frame size so inference can auto-rescale new recordings
     rec0 = _materialize(sources[0], loader)
     model.train_hw = tuple(int(x) for x in rec0.movie.shape[1:])
@@ -124,6 +129,27 @@ def train_segmenter(sources, channels: Dict[str, bool],
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(epochs, 1))
     order = list(range(len(sources)))
+
+    # One training and one held-out recording, fixed for the run. Held whole so
+    # every frame of the series is the same subject; see progress.prepare_subject
+    # for why that costs the pooled frames rather than the recording.
+    progress_at, subjects, titles = set(), [], []
+    if progress_dir:
+        from orcann.spatial.training.progress import (progress_epochs,
+                                                      prepare_subject,
+                                                      write_progress_frame)
+        progress_at = set(progress_epochs(epochs))
+        picks = [(sources[0], "train")]
+        if val_sources:
+            picks.append((val_sources[0], "held out"))
+        for src, title in picks:
+            rec = _materialize(src, loader)
+            subjects.append(prepare_subject(rec, n_energy_frames))
+            titles.append(title)
+            del rec
+        print(f"  progress frames: {len(progress_at)} of {epochs} epochs, "
+              f"{' + '.join(s[2] for s in subjects)} -> {progress_dir}")
+
     for ep in range(epochs):
         rng.shuffle(order)
         tot = 0.0; nb = 0
@@ -141,7 +167,14 @@ def train_segmenter(sources, channels: Dict[str, bool],
         if checkpoint_path:
             from orcann.pipeline.model_io import save_model
             save_model(model, checkpoint_path)
-        if ep % 5 == 0 or ep == epochs - 1:
+        if ep in progress_at:
+            ious = write_progress_frame(
+                model, subjects, titles, ep,
+                os.path.join(progress_dir, f"epoch_{ep:04d}.png"))
+            print(f"  epoch {ep:3d}  loss {tot / max(nb,1):.4f}  "
+                  + "  ".join(f"{t} IoU@0.3 {v:.3f}"
+                              for t, v in zip(titles, ious)))
+        elif ep % 5 == 0 or ep == epochs - 1:
             print(f"  epoch {ep:3d}  loss {tot / max(nb,1):.4f}")
     return model
 

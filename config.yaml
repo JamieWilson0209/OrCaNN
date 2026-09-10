@@ -123,6 +123,11 @@ train_spatial:
                                                #   mean_fill_gain  - and rescale by the kernel energy that reached
                                                #                     real pixels, restoring an edge cell's amplitude
                                                # Stamped into the checkpoint and reused by infer.
+  progress_frames: false                       # write a prediction overlay on one training and one held-out
+                                               # recording, dense over the first 10 epochs then at growing gaps
+                                               # (39 frames over 300). Lands in <out>/<name>_progress/
+                                               # epoch_NNNN.png, to be collected into a series afterwards.
+                                               # Costs one forward per subject per frame.
 
 # Group analysis - cross-recording statistics + genotype/day figures
 analysis:

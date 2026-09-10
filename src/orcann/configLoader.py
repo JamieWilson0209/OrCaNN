@@ -148,6 +148,9 @@ class TrainSpatialParams:
     holdout: bool = True
     # How the edge of a frame is read; travels with the model into infer.
     edge_correction: str = "zeros"
+    # Write a prediction overlay on one training and one held-out recording at a
+    # tapering epoch schedule, for watching the fit afterwards as a series.
+    progress_frames: bool = False
 
 
 # --- group analysis (calcium) -------------------------------------------------
@@ -444,6 +447,7 @@ _FIELD_DOC = {
     "train_spatial.fg_frac": "fraction of those centred on an annotated cell -- advanced, change only with a measured reason",
     "train_spatial.n_energy_frames": "frames pooled per forward pass, null = every frame; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.epochs": "training epochs",
+    "train_spatial.progress_frames": "write a prediction overlay per tapering epoch schedule into <out>/<name>_progress, for assembling into a series afterwards",
     "train_spatial.edge_correction": "how the frame edge is read: zeros | mean_fill | mean_fill_gain; travels with the model into infer -- advanced, change only with a measured reason",
     "train_spatial.val_frac": "fraction of recordings held out for validation",
     "train_spatial.holdout": "hold out val_frac to evaluate; false = train final model on all data",
