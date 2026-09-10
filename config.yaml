@@ -95,9 +95,14 @@ train_spatial:
   out: "models/trained"                        # where training leaves models; promote from here
   checkpoint: "models/trained/_in_progress.pt" # per-epoch scratch, overwritten, never selectable
   channels: ["structural", "max", "variance"]  # energy channels: any of structural, max, variance, correlation
-  radii: [3.0, 3.7, 4.5, 5.5, 6.7, 8.2, 10.0]  # LoG scale bank, cell radii in px
+  radii: [3.0, 3.7, 4.5, 5.5]                  # LoG scale bank, cell radii in px. Four, not seven: the
+                                               # coarse end responded to sizes the population barely
+                                               # contains, and adjacent scales correlate at 0.96.
   min_cell_area: 0                             # strip ROIs smaller than this from training masks (0 = keep all)
-  patch: 128                                   # training patch size in px (must be smaller than the frame)
+  patch: 512                                   # training patch size in px. At or above the frame size this
+                                               # turns patching OFF -- one whole frame per recording per
+                                               # epoch, which matches the support infer normalises over and
+                                               # leaves n_patch and fg_frac below with nothing to do.
   # Sampling - how much of each recording one epoch actually sees. These defaults
   # bound compute; they are not a measured property of the data. n_energy_frames
   # is stamped into the checkpoint and reused by infer, so a change here follows
@@ -105,10 +110,12 @@ train_spatial:
   n_patch: 6                                   # patches sampled per recording per epoch
   fg_frac: 0.75                                # fraction of those centred on an annotated cell
   n_energy_frames: 64                          # frames pooled per forward pass (null = every frame)
-  epochs: 100                                   # training epochs
+  epochs: 300                                  # training epochs
   val_frac: 0.2                                # fraction of recordings held out for validation
-  holdout: true                                # hold out val_frac to evaluate; false = train final model on all data
-  edge_correction: "zeros"                     # how the ∇²G bank reads the frame edge, where part of the kernel
+  holdout: false                               # hold out val_frac to evaluate; false = train final model on all
+                                               # data. False is what the model in service was fitted under, and it
+                                               # reports no IoU: set it true to get a number back.
+  edge_correction: "mean_fill_gain"            # how the ∇²G bank reads the frame edge, where part of the kernel
                                                # falls outside the recording:
                                                #   zeros           - fill with 0, so the tissue is read against a
                                                #                     cliff the height of the baseline (torch default)
