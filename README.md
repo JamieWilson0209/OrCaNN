@@ -15,11 +15,12 @@ Trained and tested on 2Hz data with the fluo-4 indicator. (See acknowledgements)
 [Usage](#usage)
 
 Parallel job submission on HPC:
-motion correction, traceability & quality control
-machine learning inference stage produces soma probability map
-segmentation derives cell boundaries from chosen probability threshold
-activity trace extraction and transient detection
-statistical analysis and diagnostics across genotype, time and whole data
+
+- motion correction, traceability & quality control
+- machine learning inference stage produces soma probability map
+- segmentation derives cell boundaries from chosen probability threshold
+- activity trace extraction and transient detection
+- statistical analysis and diagnostics across genotype, time and whole data
 
 config.yaml provides single location for every relevant parameter
  
@@ -50,10 +51,12 @@ resolves to a different model over time.
     orcann runs   --config config.yaml     which run keys exist, and how far each got
 
 *Outputs*
+```
 OrCaNN/data/pre_processed/motion_correction_outputs_<key>/:
     <recording_name>.json
     <recording_name>_shifts.npy
     <recording_name>.tif
+```
 
 ---
 
@@ -68,14 +71,17 @@ Separation of adjacent cells relies on a reduced probability boundary between th
 
 *Outputs*
 
+```
 OrCaNN/results/infer/infer_outputs_<key>/:
     <recording_name>/:
         max_projection.npy
         meta.json
         prob.npy
         prob_overlay.png
+```
 
 
+```
 OrCaNN/results/spatial/segment_outputs_<key>/:
     <recording_name>/data/:
         centroids.npy
@@ -84,7 +90,8 @@ OrCaNN/results/spatial/segment_outputs_<key>/:
         meta.json
         traces.npy
     <recording_name>/figures/:
-        overlay.png                         # Segmentation overlay, output controlled in config - Spatial QC figure written by segment
+        overlay.png            # Segmentation overlay, output controlled in config
+```
 
 
 ---
@@ -97,6 +104,7 @@ Supports OASIS ([Friedrich, Zhou & Paninski 2017](https://doi.org/10.1371/journa
 
 *Outputs*
 
+```
 OrCaNN/results/activity/activity_outputs_<key>/:
     <recording_name>/:
         gallery.html                        # Interactive viewer for diagnostics and verification, highly compressed to minimize data load
@@ -114,6 +122,7 @@ OrCaNN/results/activity/activity_outputs_<key>/:
             temporal_traces.npy
             temporal_traces_raw.npy
             traces_denoised.npy
+```
 
 Every ROI is inspectable against six background projections, with its own metrics,
 calcium trace and event count, and a cell list sortable by activity. Two recordings
@@ -129,11 +138,12 @@ from the same day - one sparse, one dense:
 Statistical analysis module - all data it uses comes from the exposed outputs of previous stages
 
 Provides:
-Selected traces
-Full overview
-Activity analysis
-Genotype comparisons
-Diagnostics and metrics
+
+- Selected traces
+- Full overview
+- Activity analysis
+- Genotype comparisons
+- Diagnostics and metrics
 
 See analysis documentation for more detail
 
@@ -186,5 +196,5 @@ MIT - see [LICENSE](LICENSE).
 
 Created in collaboration with:
 
-Theil lab, University of Edinburgh
-Chun Lim, University of Edinburgh - Provided the manually annotated training data for the available model
+- Theil lab, University of Edinburgh
+- Chun Lim, University of Edinburgh - Provided the manually annotated training data for the available model
