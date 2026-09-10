@@ -10,11 +10,11 @@ import os
 
 import numpy as np
 
-from orcann.spatial.detection.laplacian import EDGE_CORRECTIONS
 from orcann.spatial import (
     train_segmenter, load_seg_recording, synthetic_sources,
     predict_prob, best_iou, SegRecording)
 from orcann.pipeline.model_io import save_trained_model
+from orcann.spatial.detection.laplacian import EDGE_CORRECTIONS
 
 
 def find_pairs(movies_dir, masks_dir):
@@ -104,14 +104,12 @@ def run(cfg, synthetic=False):
         print(f"{len(pairs)} recordings")
 
     idx = list(range(len(sources))); rng.shuffle(idx)
-    if not t.holdout:
+    if t.holdout:
+        n_val = max(1, int(len(idx) * t.val_frac))
+        train_i, val_i = idx[n_val:], idx[:n_val]
+    else:
         train_i, val_i = idx, []
         print(f"no-holdout: training final model on all {len(idx)} recordings")
-    else:
-        n_val = max(1, int(len(idx) * t.val_frac))
-        val_i, train_i = idx[:n_val], idx[n_val:]
-    train = [sources[i] for i in train_i]
-    val = [sources[i] for i in val_i]
 
     out_dir = t.out or "/tmp/seg_synth"
     os.makedirs(out_dir, exist_ok=True)
@@ -119,28 +117,46 @@ def run(cfg, synthetic=False):
     # to be written over the model the pipeline was running, so a job killed at
     # any epoch left an under-trained model in service with the previous one
     # already gone.
-    model = train_segmenter(train, channels=channels, radii_px=radii,
-                            patch=t.patch, n_patch=t.n_patch, fg_frac=t.fg_frac,
-                            n_energy_frames=t.n_energy_frames,
-                            epochs=t.epochs, loader=loader,
-                            edge_correction=t.edge_correction,
-                            checkpoint_path=t.checkpoint or None)
+    checkpoint_path = t.checkpoint or None
 
-    metrics = {"channels": list(t.channels), "radii": list(radii),
-               "n_train": len(train), "n_val": len(val), "held_out": t.holdout,
-               "patch": t.patch, "epochs": t.epochs, "synthetic": bool(synthetic),
-               "edge_correction": t.edge_correction, "name": t.name}
-    if val:
-        ious = []
-        for s in val:
-            rec = s if isinstance(s, SegRecording) else loader(*s)
+    def fit(train_i):
+        return train_segmenter([sources[i] for i in train_i], channels=channels,
+                               radii_px=radii, patch=t.patch, n_patch=t.n_patch,
+                               fg_frac=t.fg_frac, n_energy_frames=t.n_energy_frames,
+                               epochs=t.epochs, loader=loader,
+                               edge_correction=t.edge_correction,
+                               checkpoint_path=checkpoint_path)
+
+    def score(model, val_i):
+        rows = []
+        for i in val_i:
+            src = sources[i]
+            rec = src if isinstance(src, SegRecording) else loader(*src)
             prob = predict_prob(model, rec.movie)
             iou, thr = best_iou(prob, (rec.label > 0))
-            ious.append(iou)
-            print(f"  {rec.rid:28s} IoU {iou:.3f} @thr {thr:.2f}  "
-                  f"{len(rec.centroids)} annotated cells")
+            rows.append({"recording": os.path.basename(rec.rid),
+                         "iou": float(iou), "threshold": float(thr),
+                         "n_cells": int(len(rec.centroids))})
+            print(f"  {os.path.basename(rec.rid):28s} IoU {iou:.3f} @thr {thr:.2f}  "
+                  f"{rows[-1]['n_cells']} annotated cells")
+        return rows
+
+    model = fit(train_i)
+    per_recording = score(model, val_i)
+
+    metrics = {"channels": list(t.channels), "radii": list(radii),
+               "n_recordings": len(sources),
+               "n_train": len(train_i), "n_val": len(val_i),
+               "held_out": t.holdout,
+               "patch": t.patch, "epochs": t.epochs, "synthetic": bool(synthetic),
+               "edge_correction": t.edge_correction, "name": t.name}
+    if per_recording:
+        ious = [r["iou"] for r in per_recording]
         metrics["val_iou_mean"] = float(np.mean(ious))
-        print("held-out mean IoU (best threshold):", round(metrics["val_iou_mean"], 3))
+        metrics["val_iou_std"] = float(np.std(ious))
+        metrics["val_iou_per_recording"] = per_recording
+        print(f"mean IoU (best threshold) over {len(ious)} recordings: "
+              f"{metrics['val_iou_mean']:.3f} +/- {metrics['val_iou_std']:.3f}")
     else:
         print("final model trained on all data; assess from downstream results.")
     # Written once, under an identity derived from what it is, beside its own
